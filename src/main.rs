@@ -1,4 +1,5 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 1|mod analytics;
 2|mod cmds;
 3|mod core;
@@ -573,18 +574,11 @@
 575|    /// Mypy type checker with grouped error output
 576|    Mypy {
 577|        /// Mypy arguments
-578|        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-57
+578|        #[arg(trailing_var_arg = true, allow_hyphen_value
 
-... [OUTPUT TRUNCATED - 130004 chars omitted out of 180004 total] ...
+... [OUTPUT TRUNCATED - 76491 chars omitted out of 126491 total] ...
 
-50 file.php' → cmd=head, args=["-50", "file.php"]
-            // e.g. rtk proxy 'git log --format="%H %s"' → cmd=git, args=["log", "--format=%H %s"]
-            let (cmd_name, cmd_args): (String, Vec<String>) = if args.len() == 1 {
-                let full = args[0].to_string_lossy();
-                let parts = shell_split(&full);
-                if parts.len() > 1 {
-                    (parts[0].clone(), parts[1..].to_vec())
+ts[1..].to_vec())
                 } else {
                     (full.into_owned(), vec![])
                 }
@@ -977,6 +971,18 @@ mod tests {
                 assert_eq!(agent, Some(AgentTarget::Hermes));
             }
             _ => panic!("Expected Init command"),
+        }
+    }
+
+    #[test]
+    fn test_try_parse_kubectl_get_alias() {
+        let cli = Cli::try_parse_from(["rtk", "kubectl", "get", "pods", "-n", "default"]).unwrap();
+
+        match cli.command {
+            Commands::Kubectl {
+                command: KubectlCommands::Get { args },
+            } => assert_eq!(args, vec!["pods", "-n", "default"]),
+            _ => panic!("Expected Kubectl Get command"),
         }
     }
 
