@@ -13,8 +13,8 @@
 //   3 + stdout  Ask rule matched → mutate command, allow (Pi has no confirm UI)
 
 import { spawn } from "node:child_process"
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent"
-import { isToolCallEventType } from "@mariozechner/pi-coding-agent"
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { isToolCallEventType } from "@earendil-works/pi-coding-agent"
 
 // Run a command, return { stdout, exitCode } or null on spawn error / timeout.
 function exec(cmd: string, args: string[], timeoutMs = 2000): Promise<{ stdout: string; exitCode: number } | null> {
