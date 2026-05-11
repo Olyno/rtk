@@ -13,10 +13,9 @@ use crate::hooks::constants::{
 
 use super::constants::{
     BEFORE_TOOL_KEY, CLAUDE_DIR, CLAUDE_HOOK_COMMAND, CODEX_DIR, CURSOR_HOOK_COMMAND,
-    GEMINI_HOOK_FILE, HOOKS_JSON, HOOKS_SUBDIR, PI_CODING_AGENT_DIR_ENV, PI_DIR,
-    PI_EXTENSIONS_SUBDIR, PI_PLUGIN_FILE, PRE_TOOL_USE_KEY, REWRITE_HOOK_FILE, SETTINGS_JSON,
     GEMINI_HOOK_FILE, HERMES_DIR, HERMES_PLUGINS_SUBDIR, HERMES_PLUGIN_INIT_FILE,
-    HERMES_PLUGIN_MANIFEST_FILE, HERMES_PLUGIN_NAME, HOOKS_JSON, HOOKS_SUBDIR, PRE_TOOL_USE_KEY,
+    HERMES_PLUGIN_MANIFEST_FILE, HERMES_PLUGIN_NAME, HOOKS_JSON, HOOKS_SUBDIR,
+    PI_CODING_AGENT_DIR_ENV, PI_DIR, PI_EXTENSIONS_SUBDIR, PI_PLUGIN_FILE, PRE_TOOL_USE_KEY,
     REWRITE_HOOK_FILE, SETTINGS_JSON,
 };
 use super::integrity;
@@ -612,8 +611,9 @@ pub fn uninstall(
     codex: bool,
     cursor: bool,
     pi: bool,
-    verbose: u8,
+    ctx: InitContext,
 ) -> Result<()> {
+    let InitContext { verbose, dry_run } = ctx;
     if codex {
         uninstall_codex(global, ctx)?;
         if dry_run {
@@ -2784,15 +2784,16 @@ fn pi_plugin_path_for_scope(global: bool) -> Result<PathBuf> {
 }
 
 /// Write the Pi extension file if missing or outdated. Returns true if written.
-fn ensure_pi_plugin_installed(path: &Path, verbose: u8) -> Result<bool> {
-    write_if_changed(path, PI_PLUGIN, "Pi extension", verbose)
+fn ensure_pi_plugin_installed(path: &Path, ctx: InitContext) -> Result<bool> {
+    write_if_changed(path, PI_PLUGIN, "Pi extension", ctx)
 }
 
 /// Install the Pi extension (hook-only; no AGENTS.md injection).
 ///
 /// global=true  → `$PI_CODING_AGENT_DIR/extensions/rtk.ts`
 /// global=false → `.pi/extensions/rtk.ts`
-pub fn run_pi_mode(global: bool, verbose: u8) -> Result<()> {
+pub fn run_pi_mode(global: bool, ctx: InitContext) -> Result<()> {
+    let InitContext { verbose: _, .. } = ctx;
     let plugin_path = if global {
         let pi_dir = resolve_pi_dir()?;
         let path = pi_plugin_path(&pi_dir);
@@ -2818,7 +2819,7 @@ pub fn run_pi_mode(global: bool, verbose: u8) -> Result<()> {
         path
     };
 
-    let installed = ensure_pi_plugin_installed(&plugin_path, verbose)?;
+    let installed = ensure_pi_plugin_installed(&plugin_path, ctx)?;
     print_pi_result(&plugin_path, installed);
 
     Ok(())
@@ -5526,7 +5527,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         with_claude_dir_override(&tmp, |claude_dir| {
             run_default_mode(true, PatchMode::Auto, false, InitContext::default()).unwrap();
-            uninstall(true, false, false, false, InitContext::default()).unwrap();
+            uninstall(true, false, false, false, false, InitContext::default()).unwrap();
 
             assert!(!claude_dir.join(RTK_MD).exists(), "RTK.md must be removed");
             let settings_content =
@@ -5654,7 +5655,7 @@ mod tests {
                 dry_run: true,
                 ..Default::default()
             };
-            uninstall(true, false, false, false, dry).unwrap();
+            uninstall(true, false, false, false, false, dry).unwrap();
 
             // Files must still exist with identical content
             assert!(
@@ -5774,7 +5775,7 @@ mod tests {
     fn test_run_pi_mode_global_installs_plugin() {
         let tmp = TempDir::new().unwrap();
         with_pi_dir_override(&tmp, |pi_dir| {
-            run_pi_mode(true, 0).unwrap();
+            run_pi_mode(true, InitContext::default()).unwrap();
 
             let plugin = pi_dir.join(PI_EXTENSIONS_SUBDIR).join(PI_PLUGIN_FILE);
             assert!(plugin.exists(), "global Pi extension must be created");
@@ -5794,7 +5795,7 @@ mod tests {
         let cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(tmp.path()).unwrap();
 
-        let result = run_pi_mode(false, 0);
+        let result = run_pi_mode(false, InitContext::default());
         std::env::set_current_dir(&cwd).unwrap();
         result.unwrap();
 
@@ -5810,7 +5811,7 @@ mod tests {
     fn test_run_pi_mode_global_does_not_create_agents_md() {
         let tmp = TempDir::new().unwrap();
         with_pi_dir_override(&tmp, |pi_dir| {
-            run_pi_mode(true, 0).unwrap();
+            run_pi_mode(true, InitContext::default()).unwrap();
 
             let agents_md = pi_dir.join(AGENTS_MD);
             assert!(!agents_md.exists(), "AGENTS.md must not be created");
@@ -5825,7 +5826,7 @@ mod tests {
         let orig = std::env::var_os(PI_CODING_AGENT_DIR_ENV);
         std::env::set_var(PI_CODING_AGENT_DIR_ENV, &absent_dir);
 
-        let result = run_pi_mode(true, 0);
+        let result = run_pi_mode(true, InitContext::default());
 
         match orig {
             Some(v) => std::env::set_var(PI_CODING_AGENT_DIR_ENV, v),
@@ -5848,12 +5849,12 @@ mod tests {
     fn test_pi_global_uninstall_removes_plugin() {
         let tmp = TempDir::new().unwrap();
         with_pi_dir_override(&tmp, |pi_dir| {
-            run_pi_mode(true, 0).unwrap();
+            run_pi_mode(true, InitContext::default()).unwrap();
 
             let plugin = pi_dir.join(PI_EXTENSIONS_SUBDIR).join(PI_PLUGIN_FILE);
             assert!(plugin.exists());
 
-            uninstall(true, false, false, false, true, 0).unwrap();
+            uninstall(true, false, false, false, true, InitContext::default()).unwrap();
 
             assert!(!plugin.exists(), "plugin must be removed");
         });
@@ -5866,8 +5867,8 @@ mod tests {
         let cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(tmp.path()).unwrap();
 
-        run_pi_mode(false, 0).unwrap();
-        let result = uninstall(false, false, false, false, true, 0);
+        run_pi_mode(false, InitContext::default()).unwrap();
+        let result = uninstall(false, false, false, false, true, InitContext::default());
         std::env::set_current_dir(&cwd).unwrap();
         result.unwrap();
 

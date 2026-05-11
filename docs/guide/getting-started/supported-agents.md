@@ -90,9 +90,10 @@ Creates `~/.config/opencode/plugins/rtk.ts`. Uses the `tool.execute.before` hook
 
 ```bash
 # Project-local (default)
-rtk init --pi
+rtk init --agent pi
+
 # Global — all projects
-rtk init --pi --global
+rtk init --agent pi --global
 ```
 
 Creates `.pi/extensions/rtk.ts` (local) or `~/.pi/agent/extensions/rtk.ts` (global). Pi auto-discovers extensions from both paths on startup.
@@ -100,8 +101,8 @@ Creates `.pi/extensions/rtk.ts` (local) or `~/.pi/agent/extensions/rtk.ts` (glob
 Uninstall:
 
 ```bash
-rtk init --uninstall --pi
-rtk init --uninstall --pi --global
+rtk init --uninstall --agent pi
+rtk init --uninstall --agent pi --global
 ```
 
 Removes only the installed Pi extension file.

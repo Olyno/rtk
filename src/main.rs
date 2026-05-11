@@ -376,10 +376,6 @@ enum Commands {
         /// Install GitHub Copilot integration (VS Code + CLI)
         #[arg(long)]
         copilot: bool,
-
-        /// Install Pi coding agent extension
-        #[arg(long)]
-        pi: bool,
         /// Preview changes without writing any files (combine with -v to show content)
         #[arg(long = "dry-run", conflicts_with = "show")]
         dry_run: bool,
@@ -1366,13 +1362,14 @@ fn uninstall_init_dispatch<UninstallHermes, UninstallStandard>(
 ) -> Result<()>
 where
     UninstallHermes: FnOnce(hooks::init::InitContext) -> Result<()>,
-    UninstallStandard: FnOnce(bool, bool, bool, bool, hooks::init::InitContext) -> Result<()>,
+    UninstallStandard: FnOnce(bool, bool, bool, bool, bool, hooks::init::InitContext) -> Result<()>,
 {
     if agent == Some(AgentTarget::Hermes) {
         uninstall_hermes(ctx)
     } else {
         let cursor = agent == Some(AgentTarget::Cursor);
-        uninstall_standard(global, gemini, codex, cursor, ctx)
+        let pi = agent == Some(AgentTarget::Pi);
+        uninstall_standard(global, gemini, codex, cursor, pi, ctx)
     }
 }
 
@@ -1795,7 +1792,6 @@ fn run_cli() -> Result<i32> {
             uninstall,
             codex,
             copilot,
-            pi,
             dry_run,
         } => {
             let ctx = hooks::init::InitContext {
@@ -1825,8 +1821,8 @@ fn run_cli() -> Result<i32> {
                 hooks::init::run_gemini(global, hook_only, patch_mode, ctx)?;
             } else if copilot {
                 hooks::init::run_copilot(ctx)?;
-            } else if pi || agent == Some(AgentTarget::Pi) {
-                hooks::init::run_pi_mode(global, cli.verbose)?
+            } else if agent == Some(AgentTarget::Pi) {
+                hooks::init::run_pi_mode(global, ctx)?
             } else if agent == Some(AgentTarget::Kilocode) {
                 if global {
                     anyhow::bail!("Kilo Code is project-scoped. Use: rtk init --agent kilocode");
@@ -2680,7 +2676,7 @@ mod tests {
                 assert!(ctx.dry_run);
                 Ok(())
             },
-            |_, _, _, _, _| {
+            |_, _, _, _, _, _| {
                 standard_called.set(true);
                 Ok(())
             },
@@ -3149,12 +3145,10 @@ mod tests {
     }
 
     #[test]
-    fn test_init_pi_flag_parses() {
-        let cli = Cli::try_parse_from(["rtk", "init", "--pi"]).unwrap();
-        match cli.command {
-            Commands::Init { pi, .. } => assert!(pi, "--pi flag must be set"),
-            _ => panic!("Expected Init command"),
-        }
+    fn test_init_pi_flag_rejected() {
+        // --pi has been removed; --agent pi is the canonical form
+        let result = Cli::try_parse_from(["rtk", "init", "--pi"]);
+        assert!(result.is_err(), "--pi must be rejected as unknown argument");
     }
 
     #[test]
@@ -3173,17 +3167,18 @@ mod tests {
     }
 
     #[test]
-    fn test_init_uninstall_pi_parses() {
-        let cli = Cli::try_parse_from(["rtk", "init", "--uninstall", "--pi", "--global"]).unwrap();
+    fn test_init_uninstall_agent_pi_parses() {
+        let cli = Cli::try_parse_from(["rtk", "init", "--uninstall", "--agent", "pi", "--global"])
+            .unwrap();
         match cli.command {
             Commands::Init {
                 uninstall,
-                pi,
+                agent,
                 global,
                 ..
             } => {
                 assert!(uninstall);
-                assert!(pi);
+                assert_eq!(agent, Some(AgentTarget::Pi));
                 assert!(global);
             }
             _ => panic!("Expected Init command"),

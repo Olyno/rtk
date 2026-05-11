@@ -64,6 +64,7 @@ Each agent subdirectory has its own README with hook-specific details:
 ### Claude Code (Shell Hook)
 
 **Input** (stdin):
+
 ```json
 {
   "tool_name": "Bash",
@@ -72,6 +73,7 @@ Each agent subdirectory has its own README with hook-specific details:
 ```
 
 **Output** (stdout, when rewritten):
+
 ```json
 {
   "hookSpecificOutput": {
@@ -88,6 +90,7 @@ Each agent subdirectory has its own README with hook-specific details:
 **Input**: Same as Claude Code.
 
 **Output** (stdout, when rewritten):
+
 ```json
 {
   "permission": "allow",
@@ -100,6 +103,7 @@ Returns `{}` when no rewrite (Cursor requires JSON for all paths).
 ### Copilot CLI (Rust Binary)
 
 **Input** (stdin, camelCase, `toolArgs` is JSON-stringified):
+
 ```json
 {
   "toolName": "bash",
@@ -108,6 +112,7 @@ Returns `{}` when no rewrite (Cursor requires JSON for all paths).
 ```
 
 **Output** (no `updatedInput` support -- uses deny-with-suggestion):
+
 ```json
 {
   "permissionDecision": "deny",
@@ -118,6 +123,7 @@ Returns `{}` when no rewrite (Cursor requires JSON for all paths).
 ### VS Code Copilot Chat (Rust Binary)
 
 **Input** (stdin, snake_case):
+
 ```json
 {
   "tool_name": "Bash",
@@ -130,6 +136,7 @@ Returns `{}` when no rewrite (Cursor requires JSON for all paths).
 ### Gemini CLI (Rust Binary)
 
 **Input** (stdin):
+
 ```json
 {
   "tool_name": "run_shell_command",
@@ -138,6 +145,7 @@ Returns `{}` when no rewrite (Cursor requires JSON for all paths).
 ```
 
 **Output** (when rewritten):
+
 ```json
 {
   "decision": "allow",
@@ -152,6 +160,7 @@ Returns `{}` when no rewrite (Cursor requires JSON for all paths).
 ### OpenCode (TypeScript Plugin)
 
 Mutates `args.command` in-place via the zx library:
+
 ```typescript
 const result = await $`rtk rewrite ${command}`.quiet().nothrow()
 const rewritten = String(result.stdout).trim()
@@ -247,8 +256,3 @@ RTK supports AI coding assistants that developers actually use day-to-day. To ad
 ### Maintenance
 
 If an agent's API changes and the hook breaks, the integration should be updated promptly. If the agent becomes unmaintained or the hook can't be fixed, the integration may be deprecated with a release note.
-
-### Worked Example
-
-See [`docs/specs/pi-hook-integration.md`](../docs/specs/pi-hook-integration.md) for a complete integration SPEC — covering design, component inventory, exit-code mapping, install layout, error handling, and testing strategy. Use it as a template when speccing new agent integrations.
-
