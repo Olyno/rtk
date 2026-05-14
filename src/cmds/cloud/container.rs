@@ -541,7 +541,7 @@
 621|                String::new()
 622|            } 
 
-... [OUTPUT TRUNCATED - 13935 chars omitted out of 63935 total] ...
+... [OUTPUT TRUNCATED - 71 chars omitted out of 50071 total] ...
 
 rt!(out.contains("12.3s"), "should show total build time");
 1004|        assert!(out.contains("web"), "should show service name");

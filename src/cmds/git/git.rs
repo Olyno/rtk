@@ -1,4 +1,5 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 1|//! Filters git output — log, status, diff, and more — keeping just the essential info.
 2|
 3|use crate::core::stream::{
@@ -546,113 +547,11 @@
 545|    }
 546|
 547|    // Post-process: truncate long messages, cap lines only if RTK set the default
-548|    let filte
+548|
 
-... [OUTPUT TRUNCATED - 118779 chars omitted out of 168779 total] ...
+... [OUTPUT TRUNCATED - 69894 chars omitted out of 119894 total] ...
 
-args);
-    }
-
-    /// Dotfile that exists on disk → inject `--`.
-    #[test]
-    fn test_normalize_diff_args_dotfile_is_path() {
-        let args = vec![".gitignore".to_string()];
-        let normalized = normalize_diff_args_impl(&args, exists_mock(&[".gitignore"]));
-        assert_eq!(normalized, vec!["--".to_string(), ".gitignore".to_string()]);
-    }
-
-    /// A bare ref (HEAD) that doesn't exist as a file → no injection.
-    #[test]
-    fn test_normalize_diff_args_no_injection_for_bare_ref() {
-        let args = vec!["HEAD".to_string()];
-        assert_eq!(normalize_diff_args_impl(&args, exists_mock(&[])), args);
-    }
-
-    /// Branch name with `/` that does NOT exist as a file → no injection.
-    /// Regression for issue #1431: `rtk git diff feature/user-auth` must not inject `--`.
-    #[test]
-    fn test_normalize_diff_args_no_injection_for_branch_with_slash() {
-        let args = vec!["feature/user-auth".to_string()];
-        assert_eq!(
-            normalize_diff_args_impl(&args, exists_mock(&[])),
-            args,
-            "branch names containing '/' must not trigger -- injection"
-        );
-    }
-
-    /// Range syntax with `/` → no injection.
-    /// Regression: `rtk git diff main...feature/user-auth` produced no output.
-    #[test]
-    fn test_normalize_diff_args_no_injection_for_range_with_slash() {
-        let args = vec!["main...feature/user-auth".to_string()];
-        assert_eq!(
-            normalize_diff_args_impl(&args, exists_mock(&[])),
-            args,
-            "revision ranges like main...feature/user-auth must not trigger -- injection"
-        );
-    }
-
-    /// Bare word that happens to exist as a file on disk → still no injection.
-    /// A file named "main" must not cause `--` to be injected when the user
-    /// intends `rtk git diff main` as a branch comparison.
-    #[test]
-    fn test_normalize_diff_args_no_injection_for_bare_word_even_if_file_exists() {
-        let args = vec!["main".to_string()];
-        assert_eq!(
-            normalize_diff_args_impl(&args, exists_mock(&["main"])),
-            args,
-            "bare words must never trigger -- injection even when a same-named file exists"
-        );
-    }
-
-    #[test]
-    fn test_is_blob_show_arg() {
-        assert!(is_blob_show_arg("develop:modules/pairs_backtest.py"));
-        assert!(is_blob_show_arg("HEAD:src/main.rs"));
-        assert!(!is_blob_show_arg("--pretty=format:%h"));
-        assert!(!is_blob_show_arg("--format=short"));
-        assert!(!is_blob_show_arg("HEAD"));
-    }
-
-    #[test]
-    fn test_filter_branch_output() {
-        let output = "* main\n  feature/auth\n  fix/bug-123\n  remotes/origin/HEAD -> origin/main\n  remotes/origin/main\n  remotes/origin/feature/auth\n  remotes/origin/release/v2\n";
-        let result = filter_branch_output(output);
-        assert!(result.contains("* main"));
-        assert!(result.contains("feature/auth"));
-        assert!(result.contains("fix/bug-123"));
-        // remote-only should show release/v2 but not main or feature/auth (already local)
-        assert!(result.contains("remote-only"));
-        assert!(result.contains("release/v2"));
-    }
-
-    #[test]
-    fn test_filter_branch_no_remotes() {
-        let output = "* main\n  develop\n";
-        let result = filter_branch_output(output);
-        assert!(result.contains("* main"));
-        assert!(result.contains("develop"));
-        assert!(!result.contains("remote-only"));
-    }
-
-    #[test]
-    fn test_filter_branch_multi_remote() {
-        let output = "* main\n  develop\n  remotes/origin/HEAD -> origin/main\n  remotes/origin/main\n  remotes/origin/feature-x\n  remotes/upstream/main\n  remotes/upstream/release-v3\n  remotes/fork/main\n  remotes/fork/experiment\n";
-        let result = filter_branch_output(output);
-        assert!(result.contains("* main"));
-        assert!(result.contains("develop"));
-        assert!(
-            result.contains("feature-x"),
-            "origin branch shown: {}",
-            result
-        );
-        assert!(
-            result.contains("release-v3"),
-            "upstream branch shown: {}",
-            result
-        );
-        assert!(
-            result.contains("experiment"),
+"experiment"),
             "fork branch shown: {}",
             result
         );
@@ -1292,6 +1191,125 @@ no changes added to commit (use "git add" and/or "git commit -a")
             result.contains("+3 lines omitted"),
             "Expected '+3 lines omitted' when 6 body lines truncated to 3, got:\n{}",
             result
+        );
+    }
+
+    fn run_push_filter(input: &str, exit_code: i32) -> String {
+        use crate::core::stream::StreamFilter;
+        let mut f = LineStreamFilter::new(GitPushLineHandler::default());
+        let mut out = String::new();
+        for line in input.lines() {
+            if let Some(s) = f.feed_line(line) {
+                out.push_str(&s);
+            }
+        }
+        out.push_str(&f.flush());
+        if let Some(s) = f.on_exit(exit_code, input) {
+            out.push_str(&s);
+        }
+        out
+    }
+
+    #[test]
+    fn test_push_filter_drops_progress_phases() {
+        let input = "\
+Enumerating objects: 5, done.
+Counting objects: 100% (5/5), done.
+Delta compression using up to 8 threads
+Compressing objects: 100% (3/3), done.
+Writing objects: 100% (3/3), 312 bytes | 312.00 KiB/s, done.
+Total 3 (delta 2), reused 0 (delta 0)
+To https://github.com/foo/bar.git
+   abc1234..def5678  master -> master
+";
+        let result = run_push_filter(input, 0);
+        for prefix in GIT_PUSH_NOISE_PREFIXES {
+            assert!(
+                !result.contains(prefix),
+                "noise prefix '{}' leaked through, got: {}",
+                prefix,
+                result
+            );
+        }
+        assert!(result.contains("To https://github.com/foo/bar.git"));
+        assert!(result.contains("master -> master"));
+        assert!(result.ends_with("ok master\n"), "got: {}", result);
+    }
+
+    #[test]
+    fn test_push_filter_up_to_date_summary() {
+        let input = "Everything up-to-date\n";
+        let result = run_push_filter(input, 0);
+        assert!(result.contains("Everything up-to-date"));
+        assert!(result.ends_with("ok (up-to-date)\n"), "got: {}", result);
+    }
+
+    #[test]
+    fn test_push_filter_passes_remote_messages_through() {
+        let input = "\
+remote: Resolving deltas: 100% (2/2), completed with 2 local objects.
+remote: GitHub found 1 vulnerability on foo/bar's default branch (1 moderate).
+To https://github.com/foo/bar.git
+   abc1234..def5678  feature -> feature
+";
+        let result = run_push_filter(input, 0);
+        assert!(result.contains("remote: Resolving deltas"));
+        assert!(result.contains("remote: GitHub found 1 vulnerability"));
+        assert!(result.ends_with("ok feature\n"), "got: {}", result);
+    }
+
+    #[test]
+    fn test_push_filter_no_summary_on_failure() {
+        let input = "\
+To https://github.com/foo/bar.git
+ ! [rejected]        master -> master (non-fast-forward)
+error: failed to push some refs to 'https://github.com/foo/bar.git'
+";
+        let result = run_push_filter(input, 1);
+        assert!(result.contains("[rejected]"));
+        assert!(result.contains("error: failed to push"));
+        assert!(
+            !result.contains("ok "),
+            "summary leaked on failure, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_push_filter_first_ref_wins_for_summary() {
+        let input = "\
+To https://github.com/foo/bar.git
+   abc1234..def5678  feat/a -> feat/a
+   1111111..2222222  feat/b -> feat/b
+";
+        let result = run_push_filter(input, 0);
+        assert!(result.ends_with("ok feat/a\n"), "got: {}", result);
+    }
+
+    #[test]
+    fn test_push_filter_token_savings_on_verbose_output() {
+        let input = "\
+Enumerating objects: 142, done.
+Counting objects: 100% (142/142), done.
+Delta compression using up to 8 threads
+Compressing objects: 100% (88/88), done.
+Writing objects: 100% (104/104), 28.50 KiB | 14.25 MiB/s, done.
+Total 104 (delta 64), reused 0 (delta 0), pack-reused 0
+remote: Resolving deltas: 100% (64/64), completed with 24 local objects.
+To https://github.com/foo/bar.git
+   abc1234..def5678  master -> master
+";
+        let result = run_push_filter(input, 0);
+        let count_tokens = |s: &str| s.split_whitespace().count();
+        let input_tokens = count_tokens(input);
+        let output_tokens = count_tokens(&result);
+        let savings = 100.0 - (output_tokens as f64 / input_tokens as f64 * 100.0);
+        assert!(
+            savings >= 60.0,
+            "expected >=60% savings, got {:.1}% (in={}, out={})",
+            savings,
+            input_tokens,
+            output_tokens
         );
     }
 }

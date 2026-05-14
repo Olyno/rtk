@@ -576,7 +576,7 @@
 577|        /// Mypy arguments
 578|        #[arg(trailing_var_arg = true, allow_hyphen_value
 
-... [OUTPUT TRUNCATED - 76491 chars omitted out of 126491 total] ...
+... [OUTPUT TRUNCATED - 72 chars omitted out of 50072 total] ...
 
 ts[1..].to_vec())
                 } else {
