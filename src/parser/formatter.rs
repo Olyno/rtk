@@ -237,6 +237,35 @@ mod tests {
         }
     }
 
+    fn make_dep(name: &str, version: &str, latest: Option<&str>) -> Dependency {
+        Dependency {
+            name: name.to_string(),
+            current_version: version.to_string(),
+            latest_version: latest.map(str::to_string),
+            wanted_version: None,
+            dev_dependency: false,
+        }
+    }
+
+    #[test]
+    fn test_dependency_state_plain_listing_shows_packages() {
+        let state = DependencyState {
+            total_packages: 2,
+            outdated_count: 0,
+            dependencies: vec![
+                make_dep("react", "18.0.0", None),
+                make_dep("typescript", "5.0.0", None),
+            ],
+        };
+        let out = state.format_compact();
+        assert!(out.contains("react"), "package name missing");
+        assert!(out.contains("typescript"), "package name missing");
+        assert!(
+            !out.contains("up-to-date"),
+            "false positive: plain listing should not say up-to-date"
+        );
+    }
+
     // RED: format_compact must show the full error message, not just 2 lines.
     // Playwright errors contain the expected/received diff and call log starting
     // at line 3+. Truncating to 2 lines leaves the agent with no debug info.

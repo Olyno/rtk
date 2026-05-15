@@ -2766,6 +2766,21 @@ no changes added to commit (use "git add" and/or "git commit -a")
     }
 
     #[test]
+    fn test_extract_detached_head_returns_line() {
+        let raw = "HEAD detached at abc1234\nnothing to commit, working tree clean\n";
+        assert_eq!(
+            extract_detached_head(raw),
+            Some("HEAD detached at abc1234".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_detached_head_on_branch_is_none() {
+        let raw = "On branch main\nnothing to commit, working tree clean\n";
+        assert!(extract_detached_head(raw).is_none());
+    }
+
+    #[test]
     fn test_filter_log_output_body_omission_indicator() {
         // Commit with 6 meaningful body lines: only 3 shown, must signal "+3 lines omitted"
         let body_lines = (1..=6)

@@ -247,6 +247,18 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_logs_extended_severity_keywords() {
+        let logs = "2024-01-01 10:00:00 CRITICAL: disk full\n\
+                    2024-01-01 10:00:01 ALERT: memory pressure\n\
+                    2024-01-01 10:00:02 emerg: system shutdown imminent\n\
+                    2024-01-01 10:00:03 SEVERE: data corruption detected\n\
+                    2024-01-01 10:00:04 notice: config reloaded\n";
+        let result = analyze_logs(logs);
+        assert!(result.contains("ERRORS"), "critical/alert/emerg/severe should count as errors");
+        assert!(result.contains("WARNINGS"), "notice should count as warning");
+    }
+
+    #[test]
     fn test_analyze_logs_multibyte() {
         let logs = format!(
             "2024-01-01 10:00:00 ERROR: {} connection failed\n\

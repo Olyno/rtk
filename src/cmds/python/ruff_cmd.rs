@@ -364,6 +364,8 @@ mod tests {
         assert!(result.contains("E501"));
         assert!(result.contains("main.py"));
         assert!(result.contains("utils.py"));
+        assert!(result.contains("Violations:"), "Violations section missing");
+        assert!(result.contains("1:8"), "line:col location missing");
     }
 
     #[test]

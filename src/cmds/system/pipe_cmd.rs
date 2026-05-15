@@ -302,6 +302,11 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_filter_log() {
+        assert!(resolve_filter("log").is_some());
+    }
+
+    #[test]
     fn test_resolve_filter_unknown_returns_none() {
         assert!(resolve_filter("nonexistent-filter").is_none());
     }
