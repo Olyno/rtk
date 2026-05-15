@@ -1503,16 +1503,14 @@ fn run_fetch(args: &[String], verbose: u8, global_args: &[String]) -> Result<i32
 fn format_stash_message(subcommand: Option<&str>, result: &CaptureResult) -> String {
     match subcommand {
         None | Some("push") | Some("save") => {
-            // Pass git's own message through — it distinguishes "Saved working
-            // directory and index state WIP on <branch>: <sha> <msg>" from
-            // "No local changes to save". Collapsing both to "ok" hides whether
-            // anything was actually stashed (and which ref to pop later).
-            let out = result.combined();
-            let trimmed = out.trim();
-            if trimmed.is_empty() {
-                "ok stashed".to_string()
+            // A successful stash collapses to "ok stashed" (the WIP ref/sha git
+            // prints isn't needed to `git stash pop`). But a no-op must NOT look
+            // like success — pass git's "No local changes to save" through so the
+            // agent can tell nothing was stashed.
+            if result.combined().contains("No local changes") {
+                "No local changes to save".to_string()
             } else {
-                trimmed.to_string()
+                "ok stashed".to_string()
             }
         }
         Some(sub) => format!("ok stash {}", sub),
