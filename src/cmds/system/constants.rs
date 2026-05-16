@@ -14,6 +14,7 @@ pub const NOISE_DIRS: &[&str] = &[
     ".tox",
     ".venv",
     "venv",
+    "env", // Python legacy virtualenv dir — noise. .env (dotenv) is intentionally NOT here: agents must see it.
     "coverage",
     ".nyc_output",
     ".DS_Store",
