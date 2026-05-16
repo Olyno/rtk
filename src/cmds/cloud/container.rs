@@ -54,7 +54,6 @@ where
 fn docker_ps(_verbose: u8) -> Result<i32> {
     let timer = tracking::TimedExecution::start();
 
-    // Baseline the LLM would otherwise see.
     let raw = exec_capture(resolved_command("docker").args(["ps"]))
         .map(|r| r.stdout)
         .unwrap_or_default();
@@ -76,7 +75,6 @@ fn docker_ps(_verbose: u8) -> Result<i32> {
     }
 
     let format_line = |parts: &[&str], with_ports: bool| -> Option<String> {
-        // parts: State, ID, Names, Status, Image, Ports
         if parts.len() < 5 {
             return None;
         }
@@ -140,7 +138,7 @@ fn docker_ps(_verbose: u8) -> Result<i32> {
         rtk.push_str(l);
     }
     if running_lines.len() > MAX_CONTAINERS {
-        rtk.push_str(&format!("  ... +{} more\n", running_lines.len() - MAX_CONTAINERS));
+        rtk.push_str(&format!("  … +{} more\n", running_lines.len() - MAX_CONTAINERS));
     }
     if !stopped_lines.is_empty() {
         rtk.push_str(&format!("[docker] {} stopped/exited:\n", stopped_lines.len()));
@@ -148,7 +146,7 @@ fn docker_ps(_verbose: u8) -> Result<i32> {
             rtk.push_str(l);
         }
         if stopped_lines.len() > MAX_CONTAINERS {
-            rtk.push_str(&format!("  ... +{} more\n", stopped_lines.len() - MAX_CONTAINERS));
+            rtk.push_str(&format!("  … +{} more\n", stopped_lines.len() - MAX_CONTAINERS));
         }
     }
     if truncated {
@@ -236,7 +234,6 @@ fn docker_images(_verbose: u8) -> Result<i32> {
         })
         .collect();
 
-    // full_rtk = header already in rtk + all image lines (for tee when truncated)
     let mut full_rtk = rtk.clone();
     for l in &image_lines {
         full_rtk.push_str(l);
@@ -246,7 +243,7 @@ fn docker_images(_verbose: u8) -> Result<i32> {
         rtk.push_str(l);
     }
     if image_lines.len() > MAX_IMAGES {
-        rtk.push_str(&format!("  ... +{} more\n", image_lines.len() - MAX_IMAGES));
+        rtk.push_str(&format!("  … +{} more\n", image_lines.len() - MAX_IMAGES));
         if let Some(hint) = crate::core::tee::force_tee_tail_hint(&full_rtk, "docker-images", MAX_IMAGES + 2) {
             rtk.push_str(&format!("{}\n", hint));
         }
@@ -356,7 +353,7 @@ fn format_kubectl_pods(json: &Value) -> String {
             out.push_str(&format!("  {}\n", issue));
         }
         if issues.len() > 10 {
-            out.push_str(&format!("  ... +{} more", issues.len() - 10));
+            out.push_str(&format!("  … +{} more", issues.len() - 10));
         }
     }
     out
@@ -409,7 +406,7 @@ fn format_kubectl_services(json: &Value) -> String {
         ));
     }
     if services.len() > 15 {
-        out.push_str(&format!("  ... +{} more", services.len() - 15));
+        out.push_str(&format!("  … +{} more", services.len() - 15));
     }
     out
 }
@@ -483,7 +480,7 @@ pub fn format_compose_ps(raw: &str) -> String {
         }
     }
     if lines.len() > 20 {
-        result.push_str(&format!("  ... +{} more\n", lines.len() - 20));
+        result.push_str(&format!("  … +{} more\n", lines.len() - 20));
     }
 
     result.trim_end().to_string()
@@ -573,7 +570,7 @@ fn compact_ports(ports: &str) -> String {
         port_nums.join(", ")
     } else {
         format!(
-            "{}, ... +{}",
+            "{}, … +{}",
             port_nums[..2].join(", "),
             port_nums.len() - 2
         )
@@ -814,6 +811,6 @@ api-1  | Connected to database";
     #[test]
     fn test_compact_ports_many() {
         let result = compact_ports("0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp, 0.0.0.0:8080->8080/tcp, 0.0.0.0:9090->9090/tcp");
-        assert!(result.contains("..."), "should truncate for >3 ports");
+        assert!(result.contains("…"), "should truncate for >3 ports");
     }
 }

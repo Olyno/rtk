@@ -139,7 +139,6 @@ pub(crate) fn filter_pytest_output(output: &str) -> String {
                 if trimmed.starts_with("FAILED") || trimmed.starts_with("ERROR") {
                     failures.push(trimmed.to_string());
                 } else if trimmed.starts_with("XFAIL") || trimmed.starts_with("XPASS") {
-                    // `-rxX` adds these: "XFAIL path::test - reason" / "XPASS path::test - reason"
                     xfail_lines.push(trimmed.to_string());
                 }
             }
@@ -211,7 +210,7 @@ fn build_pytest_summary(
             result.push_str(&format!("  {}\n", truncate(line, 120)));
         }
         if xfail_lines.len() > MAX_XFAIL {
-            result.push_str(&format!("  ... +{} more\n", xfail_lines.len() - MAX_XFAIL));
+            result.push_str(&format!("  … +{} more\n", xfail_lines.len() - MAX_XFAIL));
             let all_xfail = xfail_lines.join("\n");
             if let Some(hint) = crate::core::tee::force_tee_tail_hint(&all_xfail, "pytest-xfail", MAX_XFAIL + 1) {
                 result.push_str(&format!("  {}\n", hint));
@@ -272,7 +271,7 @@ fn build_pytest_summary(
     }
 
     if failures.len() > 5 {
-        result.push_str(&format!("\n... +{} more failures\n", failures.len() - 5));
+        result.push_str(&format!("\n… +{} more failures\n", failures.len() - 5));
     }
 
     result.trim().to_string()

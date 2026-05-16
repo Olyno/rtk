@@ -135,7 +135,6 @@ fn extract_list_text(output: &str) -> Option<DependencyState> {
     for line in output.lines() {
         let trimmed = line.trim();
 
-        // Track dependency category from pnpm's section headers
         if trimmed == "devDependencies:" {
             is_dev = true;
             continue;
@@ -312,7 +311,7 @@ fn format_dependency_listing(state: &DependencyState, cap: bool) -> String {
         }
         if cap && prod.len() > MAX_LISTING {
             lines.push(format!(
-                "  ... +{} more — run `pnpm list --prod | tail -n +{}`",
+                "  … +{} more — run `pnpm list --prod | tail -n +{}`",
                 prod.len() - MAX_LISTING,
                 MAX_LISTING + 3
             ));
@@ -327,7 +326,7 @@ fn format_dependency_listing(state: &DependencyState, cap: bool) -> String {
         }
         if cap && dev.len() > MAX_LISTING {
             lines.push(format!(
-                "  ... +{} more — run `pnpm list --dev | tail -n +{}`",
+                "  … +{} more — run `pnpm list --dev | tail -n +{}`",
                 dev.len() - MAX_LISTING,
                 MAX_LISTING + 3
             ));
@@ -628,7 +627,7 @@ mod tests {
         let out = format_dependency_listing(&state, true);
         let prod_count = 60usize;
         assert!(
-            out.contains(&format!("... +{} more", prod_count - MAX_LISTING)),
+            out.contains(&format!("… +{} more", prod_count - MAX_LISTING)),
             "truncation count missing"
         );
         assert!(
@@ -643,7 +642,7 @@ mod tests {
         let prod: Vec<&str> = (0..60).map(|_| "pkg").collect();
         let state = make_state(&prod, &[]);
         let out = format_dependency_listing(&state, false);
-        assert!(!out.contains("... +"), "should not truncate when cap=false");
+        assert!(!out.contains("… +"), "should not truncate when cap=false");
         assert!(!out.contains("[dev]"), "no dev section for prod-only state");
     }
 
@@ -652,7 +651,7 @@ mod tests {
         let dev: Vec<&str> = (0..60).map(|_| "pkg").collect();
         let state = make_state(&[], &dev);
         let out = format_dependency_listing(&state, false);
-        assert!(!out.contains("... +"), "should not truncate when cap=false");
+        assert!(!out.contains("… +"), "should not truncate when cap=false");
         assert!(!out.contains("[prod]"), "no prod section for dev-only state");
     }
 

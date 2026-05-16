@@ -676,13 +676,10 @@ fn truncate_line(line: &str, width: usize) -> String {
     }
 }
 
-/// Preserve RTK's branch/clean framing while keeping porcelain file lines intact.
 pub(crate) fn format_status_output(porcelain: &str) -> String {
     format_status_inner(porcelain, None)
 }
 
-/// Like `format_status_output` but substitutes the explicit detached-HEAD ref.
-// receives the real ref extracted from plain-status output.
 pub(crate) fn format_status_output_detached(porcelain: &str, detached_ref: &str) -> String {
     format_status_inner(porcelain, Some(detached_ref))
 }
