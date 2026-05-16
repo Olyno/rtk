@@ -272,6 +272,10 @@ fn build_pytest_summary(
 
     if failures.len() > 5 {
         result.push_str(&format!("\n… +{} more failures\n", failures.len() - 5));
+        let all_failures = failures.join("\n\n");
+        if let Some(hint) = crate::core::tee::force_tee_hint(&all_failures, "pytest-failures") {
+            result.push_str(&format!("  {}\n", hint));
+        }
     }
 
     result.trim().to_string()

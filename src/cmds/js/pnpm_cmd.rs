@@ -310,11 +310,17 @@ fn format_dependency_listing(state: &DependencyState, cap: bool) -> String {
             lines.push(format!("  {} {}", dep.name, dep.current_version));
         }
         if cap && prod.len() > MAX_LISTING {
-            lines.push(format!(
-                "  … +{} more — run `pnpm list --prod | tail -n +{}`",
-                prod.len() - MAX_LISTING,
-                MAX_LISTING + 3
-            ));
+            lines.push(format!("  … +{} more", prod.len() - MAX_LISTING));
+            let all_prod = prod
+                .iter()
+                .map(|dep| format!("  {} {}", dep.name, dep.current_version))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if let Some(hint) =
+                crate::core::tee::force_tee_tail_hint(&all_prod, "pnpm-prod", MAX_LISTING + 1)
+            {
+                lines.push(format!("  {}", hint));
+            }
         }
     }
 
@@ -325,11 +331,17 @@ fn format_dependency_listing(state: &DependencyState, cap: bool) -> String {
             lines.push(format!("  {} {}", dep.name, dep.current_version));
         }
         if cap && dev.len() > MAX_LISTING {
-            lines.push(format!(
-                "  … +{} more — run `pnpm list --dev | tail -n +{}`",
-                dev.len() - MAX_LISTING,
-                MAX_LISTING + 3
-            ));
+            lines.push(format!("  … +{} more", dev.len() - MAX_LISTING));
+            let all_dev = dev
+                .iter()
+                .map(|dep| format!("  {} {}", dep.name, dep.current_version))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if let Some(hint) =
+                crate::core::tee::force_tee_tail_hint(&all_dev, "pnpm-dev", MAX_LISTING + 1)
+            {
+                lines.push(format!("  {}", hint));
+            }
         }
     }
 
@@ -628,13 +640,8 @@ mod tests {
         let prod_count = 60usize;
         assert!(
             out.contains(&format!("… +{} more", prod_count - MAX_LISTING)),
-            "truncation count missing"
+            "truncation count missing: got\n{out}"
         );
-        assert!(
-            out.contains(&format!("tail -n +{}", MAX_LISTING + 3)),
-            "tail offset missing: got\n{out}"
-        );
-        assert!(out.contains("pnpm list --prod"), "hint command missing");
     }
 
     #[test]

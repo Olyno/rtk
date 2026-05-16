@@ -282,8 +282,9 @@ fn filter_eslint_json(output: &str) -> String {
     }
 
     // Show top files with most issues, plus the top rules in each
+    const MAX_FILES: usize = 10;
     result.push_str("Top files:\n");
-    for (file_result, count) in by_file.iter().take(10) {
+    for (file_result, count) in by_file.iter().take(MAX_FILES) {
         let short_path = compact_path(&file_result.file_path);
         result.push_str(&format!("  {} ({} issues)\n", short_path, count));
 
@@ -300,8 +301,18 @@ fn filter_eslint_json(output: &str) -> String {
         }
     }
 
-    if by_file.len() > 10 {
-        result.push_str(&format!("\n... +{} more files\n", by_file.len() - 10));
+    if by_file.len() > MAX_FILES {
+        result.push_str(&format!("\n… +{} more files\n", by_file.len() - MAX_FILES));
+        let all_file_lines = by_file
+            .iter()
+            .map(|(r, count)| format!("{} ({} issues)", compact_path(&r.file_path), count))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Some(hint) =
+            crate::core::tee::force_tee_tail_hint(&all_file_lines, "eslint-files", MAX_FILES + 1)
+        {
+            result.push_str(&format!("  {}\n", hint));
+        }
     }
 
     result.trim().to_string()
@@ -397,8 +408,9 @@ fn filter_pylint_json(output: &str) -> String {
     }
 
     // Show top files
+    const MAX_FILES: usize = 10;
     result.push_str("Top files:\n");
-    for (file, count) in file_counts.iter().take(10) {
+    for (file, count) in file_counts.iter().take(MAX_FILES) {
         let short_path = compact_path(file);
         result.push_str(&format!("  {} ({} issues)\n", short_path, count));
 
@@ -417,8 +429,18 @@ fn filter_pylint_json(output: &str) -> String {
         }
     }
 
-    if file_counts.len() > 10 {
-        result.push_str(&format!("\n... +{} more files\n", file_counts.len() - 10));
+    if file_counts.len() > MAX_FILES {
+        result.push_str(&format!("\n… +{} more files\n", file_counts.len() - MAX_FILES));
+        let all_file_lines = file_counts
+            .iter()
+            .map(|(file, count)| format!("{} ({} issues)", compact_path(file), count))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Some(hint) =
+            crate::core::tee::force_tee_tail_hint(&all_file_lines, "pylint-files", MAX_FILES + 1)
+        {
+            result.push_str(&format!("  {}\n", hint));
+        }
     }
 
     result.trim().to_string()
@@ -450,12 +472,19 @@ fn filter_generic_lint(output: &str) -> String {
     result.push_str(&format!("Lint: {} errors, {} warnings\n", errors, warnings));
     result.push_str("═══════════════════════════════════════\n");
 
-    for issue in issues.iter().take(20) {
+    const MAX_ISSUES: usize = 20;
+    for issue in issues.iter().take(MAX_ISSUES) {
         result.push_str(&format!("{}\n", truncate(issue, 100)));
     }
 
-    if issues.len() > 20 {
-        result.push_str(&format!("\n... +{} more issues\n", issues.len() - 20));
+    if issues.len() > MAX_ISSUES {
+        result.push_str(&format!("\n… +{} more issues\n", issues.len() - MAX_ISSUES));
+        let all_issues = issues.join("\n");
+        if let Some(hint) =
+            crate::core::tee::force_tee_tail_hint(&all_issues, "lint-issues", MAX_ISSUES + 1)
+        {
+            result.push_str(&format!("  {}\n", hint));
+        }
     }
 
     result.trim().to_string()

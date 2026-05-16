@@ -348,12 +348,19 @@ fn format_kubectl_pods(json: &Value) -> String {
 
     let mut out = format!("{} pods: {}\n", pods.len(), parts.join(", "));
     if !issues.is_empty() {
+        const MAX_PODS_ISSUES: usize = 10;
         out.push_str("[warn] Issues:\n");
-        for issue in issues.iter().take(10) {
+        for issue in issues.iter().take(MAX_PODS_ISSUES) {
             out.push_str(&format!("  {}\n", issue));
         }
-        if issues.len() > 10 {
-            out.push_str(&format!("  … +{} more", issues.len() - 10));
+        if issues.len() > MAX_PODS_ISSUES {
+            out.push_str(&format!("  … +{} more", issues.len() - MAX_PODS_ISSUES));
+            let all_issues = issues.join("\n");
+            if let Some(hint) =
+                crate::core::tee::force_tee_tail_hint(&all_issues, "kubectl-pods", MAX_PODS_ISSUES + 1)
+            {
+                out.push_str(&format!(" {}", hint));
+            }
         }
     }
     out
@@ -374,39 +381,48 @@ fn format_kubectl_services(json: &Value) -> String {
     };
     let mut out = format!("{} services:\n", services.len());
 
-    for svc in services.iter().take(15) {
-        let ns = svc["metadata"]["namespace"].as_str().unwrap_or("-");
-        let name = svc["metadata"]["name"].as_str().unwrap_or("-");
-        let svc_type = svc["spec"]["type"].as_str().unwrap_or("-");
-        let ports: Vec<String> = svc["spec"]["ports"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .map(|p| {
-                        let port = p["port"].as_i64().unwrap_or(0);
-                        let target = p["targetPort"]
-                            .as_i64()
-                            .or_else(|| p["targetPort"].as_str().and_then(|s| s.parse().ok()))
-                            .unwrap_or(port);
-                        if port == target {
-                            format!("{}", port)
-                        } else {
-                            format!("{}→{}", port, target)
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        out.push_str(&format!(
-            "  {}/{} {} [{}]\n",
-            ns,
-            name,
-            svc_type,
-            ports.join(",")
-        ));
+    let all_lines: Vec<String> = services
+        .iter()
+        .map(|svc| {
+            let ns = svc["metadata"]["namespace"].as_str().unwrap_or("-");
+            let name = svc["metadata"]["name"].as_str().unwrap_or("-");
+            let svc_type = svc["spec"]["type"].as_str().unwrap_or("-");
+            let ports: Vec<String> = svc["spec"]["ports"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|p| {
+                            let port = p["port"].as_i64().unwrap_or(0);
+                            let target = p["targetPort"]
+                                .as_i64()
+                                .or_else(|| p["targetPort"].as_str().and_then(|s| s.parse().ok()))
+                                .unwrap_or(port);
+                            if port == target {
+                                format!("{}", port)
+                            } else {
+                                format!("{}→{}", port, target)
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            format!("  {}/{} {} [{}]", ns, name, svc_type, ports.join(","))
+        })
+        .collect();
+
+    const MAX_KUBECTL_SERVICES: usize = 15;
+    for line in all_lines.iter().take(MAX_KUBECTL_SERVICES) {
+        out.push_str(&format!("{}\n", line));
     }
-    if services.len() > 15 {
-        out.push_str(&format!("  … +{} more", services.len() - 15));
+    if all_lines.len() > MAX_KUBECTL_SERVICES {
+        out.push_str(&format!("  … +{} more", all_lines.len() - MAX_KUBECTL_SERVICES));
+        let all_text = all_lines.join("\n");
+        if let Some(hint) =
+            crate::core::tee::force_tee_tail_hint(&all_text, "kubectl-services", MAX_KUBECTL_SERVICES + 1)
+        {
+            out.push_str(&format!(" {}", hint));
+        }
+        out.push('\n');
     }
     out
 }
@@ -444,6 +460,7 @@ fn kubectl_logs(args: &[String], _verbose: u8) -> Result<i32> {
 /// Expects tab-separated lines: Name\tImage\tStatus\tPorts
 /// (no header row — `--format` output is headerless)
 pub fn format_compose_ps(raw: &str) -> String {
+    const MAX_COMPOSE_SERVICES: usize = 20;
     let lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
 
     if lines.is_empty() {
@@ -452,16 +469,19 @@ pub fn format_compose_ps(raw: &str) -> String {
 
     let mut result = format!("[compose] {} services:\n", lines.len());
 
-    for line in lines.iter().take(20) {
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() >= 4 {
+    // Pre-build all formatted lines so the tee file matches what the agent sees.
+    let all_formatted: Vec<String> = lines
+        .iter()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() < 4 {
+                return None;
+            }
             let name = parts[0];
             let image = parts[1];
             let status = parts[2];
             let ports = parts[3];
-
             let short_image = image.split('/').next_back().unwrap_or(image);
-
             let port_str = if ports.trim().is_empty() {
                 String::new()
             } else {
@@ -472,15 +492,20 @@ pub fn format_compose_ps(raw: &str) -> String {
                     format!(" [{}]", compact)
                 }
             };
+            Some(format!("  {} ({}) {}{}", name, short_image, status, port_str))
+        })
+        .collect();
 
-            result.push_str(&format!(
-                "  {} ({}) {}{}\n",
-                name, short_image, status, port_str
-            ));
-        }
+    for line in all_formatted.iter().take(MAX_COMPOSE_SERVICES) {
+        result.push_str(line);
+        result.push('\n');
     }
-    if lines.len() > 20 {
-        result.push_str(&format!("  … +{} more\n", lines.len() - 20));
+    if all_formatted.len() > MAX_COMPOSE_SERVICES {
+        result.push_str(&format!("  … +{} more\n", all_formatted.len() - MAX_COMPOSE_SERVICES));
+        let all_text = all_formatted.join("\n");
+        if let Some(hint) = crate::core::tee::force_tee_tail_hint(&all_text, "compose-ps", MAX_COMPOSE_SERVICES + 1) {
+            result.push_str(&format!("  {}\n", hint));
+        }
     }
 
     result.trim_end().to_string()
