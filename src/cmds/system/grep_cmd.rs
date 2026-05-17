@@ -7,6 +7,9 @@ use crate::core::utils::resolved_command;
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::collections::HashMap;
+use std::path::Path;
+
+use super::index_aware;
 
 #[allow(clippy::too_many_arguments)]
 pub fn run(
@@ -25,7 +28,41 @@ pub fn run(
         eprintln!("grep: '{}' in {}", pattern, path);
     }
 
-    // Fix: convert BRE alternation \| → | for rg (which uses PCRE-style regex)
+    // Try index-aware lookup for simple symbol queries before falling back to rg.
+    // This reduces token count significantly for codebase exploration queries
+    // like "rtk grep parseFile" → structured symbol results instead of raw grep.
+    if extra_args.is_empty()
+        || (extra_args.len() == 1 && extra_args[0].starts_with('-'))
+    {
+        let base_path = Path::new(path);
+        let index_result = index_aware::with_index(base_path, |idx| {
+            index_aware::query_code_index(idx, pattern)
+        });
+
+        match index_result {
+            Ok(Some(results)) => {
+                let output = results.join("\n");
+                let msg = format!("{} symbols matching '{}'", results.len(), pattern);
+                eprintln!("rtk: {} (via index)", msg);
+                println!("{}", output);
+
+                let timer = tracking::TimedExecution::start();
+                timer.track(
+                    &format!("grep '{}' {}", pattern, path),
+                    &format!("rtk grep '{}' {} (index)", pattern, path),
+                    &output,
+                    &output,
+                );
+                return Ok(0);
+            }
+            Err(e) => {
+                eprintln!("rtk: index unavailable ({}), falling back to rg", e);
+            }
+            _ => {}
+        }
+    }
+
+    // Fix: convert BRE alternation \\| → | for rg (which uses PCRE-style regex)
     let rg_pattern = pattern.replace(r"\|", "|");
 
     let mut rg_cmd = resolved_command("rg");
