@@ -1047,9 +1047,9 @@ pub(crate) fn filter_cargo_test(output: &str) -> String {
         }
         if failures.len() > MAX_FAILURES {
             result.push_str(&format!("\n… +{} more failures\n", failures.len() - MAX_FAILURES));
-            let all_failures = failures.join("\n");
+            let all_failures = failures.join("\n\n");
             if let Some(hint) =
-                crate::core::tee::force_tee_tail_hint(&all_failures, "cargo-test-failures", MAX_FAILURES + 1)
+                crate::core::tee::force_tee_hint(&all_failures, "cargo-test-failures")
             {
                 result.push_str(&format!("  {}\n", hint));
             }
