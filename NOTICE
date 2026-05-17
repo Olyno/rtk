@@ -1,0 +1,18 @@
+slt
+Copyright 2024 rtk-ai and rtk-ai Labs
+
+This product includes software concepts inspired by the following projects:
+
+- fff.nvim (https://github.com/dmtrKovalenko/fff.nvim)
+  Copyright (c) 2025 Dmitriy Kovalenko
+  Licensed under the MIT License
+  The file indexing concepts (frecency-ranked file tracking, fuzzy search)
+  used in src/index/file_index.rs were inspired by this project.
+  No source code was copied; the implementation is original.
+
+- codedb (https://github.com/justrach/codedb)
+  Copyright (c) 2024-2026 Rach Pradhan (justrach)
+  Licensed under the BSD 3-Clause License
+  The code indexing concepts (structural outlines, symbol extraction,
+  lightweight search) used in src/index/code_index.rs were inspired by
+  this project. No source code was copied; the implementation is original.

@@ -3,11 +3,13 @@ mod cmds;
 mod core;
 mod discover;
 mod hooks;
+mod index;
 mod learn;
 mod parser;
 
 // Re-export command modules for routing
 use cmds::cloud::{aws_cmd, container, curl_cmd, psql_cmd, wget_cmd};
+use cmds::dart::{dart_cmd, flutter_cmd};
 use cmds::dotnet::{binlog, dotnet_cmd, dotnet_format_report, dotnet_trx};
 use cmds::git::{diff_cmd, gh_cmd, git, glab_cmd, gt_cmd};
 use cmds::go::{go_cmd, golangci_cmd};
@@ -195,6 +197,20 @@ enum Commands {
     #[command(disable_help_flag = true)]
     Psql {
         /// psql arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Flutter commands with compact analyzer and test output
+    Flutter {
+        /// Flutter arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Dart commands with compact analyzer, formatter, and test output
+    Dart {
+        /// Dart arguments
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -583,6 +599,16 @@ enum Commands {
     Telemetry {
         #[command(subcommand)]
         command: core::telemetry_cmd::TelemetrySubcommand,
+    },
+
+    /// Index the current project for fast file and code search
+    Index {
+        /// Path to index (default: current directory)
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Show index statistics after scanning
+        #[arg(short, long)]
+        stats: bool,
     },
 
     /// Learn CLI corrections from Claude Code error history
@@ -1126,6 +1152,7 @@ const RTK_META_COMMANDS: &[&str] = &[
     "untrust",
     "session",
     "rewrite",
+    "index",
 ];
 
 fn run_fallback(parse_error: clap::Error) -> Result<i32> {
@@ -1602,6 +1629,10 @@ fn run_cli() -> Result<i32> {
 
         Commands::Psql { args } => psql_cmd::run(&args, cli.verbose)?,
 
+        Commands::Flutter { args } => flutter_cmd::run(&args, cli.verbose)?,
+
+        Commands::Dart { args } => dart_cmd::run(&args, cli.verbose)?,
+
         Commands::Pnpm { filter, command } => {
             // Warns user if filters are used with unsupported subcommands like typecheck
             if let Some(warning) = validate_pnpm_filters(&filter, &command) {
@@ -2028,6 +2059,28 @@ fn run_cli() -> Result<i32> {
 
         Commands::Telemetry { command } => {
             core::telemetry_cmd::run(&command)?;
+            0
+        }
+
+        Commands::Index { path, stats } => {
+            let mut idx = index::ProjectIndex::open(&path)?;
+            eprintln!("rtk index: scanning {:?} ...", path);
+            let (file_count, symbol_count) = idx.scan()?;
+            println!("Indexed {} files, {} symbols", file_count, symbol_count);
+            if stats {
+                if let Ok(breakdown) = idx.files.language_breakdown() {
+                    println!("\nLanguages:");
+                    for (lang, count) in breakdown {
+                        println!("  {}: {}", lang, count);
+                    }
+                }
+                if let Ok(code_stats) = idx.code.stats() {
+                    println!("\nSymbols:");
+                    for (kind, count) in code_stats {
+                        println!("  {}: {}", kind, count);
+                    }
+                }
+            }
             0
         }
 
