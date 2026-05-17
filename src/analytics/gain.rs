@@ -24,6 +24,7 @@ pub fn run(
     all: bool,
     format: &str,
     failures: bool,
+    potential: bool,
     reset: bool,
     yes: bool,
     _verbose: u8,
@@ -45,6 +46,10 @@ pub fn run(
 
     if failures {
         return show_failures(&tracker);
+    }
+
+    if potential {
+        return show_potential(&tracker);
     }
 
     // Handle export formats
@@ -737,6 +742,122 @@ fn show_failures(tracker: &Tracker) -> Result<()> {
         println!();
     }
 
+    Ok(())
+}
+
+fn show_potential(tracker: &Tracker) -> Result<()> {
+    use crate::core::display_helpers::format_duration;
+    use crate::core::utils::format_tokens;
+
+    let records = tracker
+        .get_potential_summary(5)
+        .context("Failed to load potential commands")?;
+
+    if records.is_empty() {
+        println!("{}", styled("No potential commands yet.", false));
+        println!("  Commands not handled by rtk are tracked here after 5+ executions.");
+        return Ok(());
+    }
+
+    println!("{}", styled("Potential Commands", true));
+    println!("  Commands executed >5 times via fallback (candidates for new filters)");
+    println!();
+
+    // Same layout as "By Command" table, with "Consumed" instead of "Saved"
+    let cmd_width = 24usize;
+    let impact_width = 10usize;
+    let count_width = records
+        .iter()
+        .map(|r| r.exec_count.to_string().len())
+        .max()
+        .unwrap_or(5)
+        .max(5);
+    let consumed_width = records
+        .iter()
+        .map(|r| format_tokens(r.total_input_tokens).len())
+        .max()
+        .unwrap_or(8)
+        .max(8);
+    let time_width = records
+        .iter()
+        .map(|r| {
+            let avg = if r.exec_count > 0 {
+                r.total_time_ms / r.exec_count as u64
+            } else {
+                0
+            };
+            format_duration(avg).len()
+        })
+        .max()
+        .unwrap_or(6)
+        .max(6);
+
+    let table_width = 3
+        + 2
+        + cmd_width
+        + 2
+        + count_width
+        + 2
+        + consumed_width
+        + 2
+        + 6
+        + 2
+        + time_width
+        + 2
+        + impact_width;
+    println!("{}", "─".repeat(table_width));
+    println!(
+        "{:>3}  {:<cmd_width$}  {:>count_width$}  {:>consumed_width$}  {:>6}  {:>time_width$}  {:<impact_width$}",
+        "#", "Command", "Count", "Consumed", "Avg", "Time", "Impact",
+        cmd_width = cmd_width, count_width = count_width,
+        consumed_width = consumed_width, time_width = time_width,
+        impact_width = impact_width
+    );
+    println!("{}", "─".repeat(table_width));
+
+    let max_consumed = records
+        .iter()
+        .map(|r| r.total_input_tokens)
+        .max()
+        .unwrap_or(1);
+
+    for (idx, rec) in records.iter().enumerate() {
+        let row_idx = format!("{:>2}.", idx + 1);
+        let cmd_display = truncate_for_column(&rec.command, cmd_width);
+        let cmd_cell = style_command_cell(&cmd_display);
+        let count_cell = format!(
+            "{:>count_width$}",
+            rec.exec_count,
+            count_width = count_width
+        );
+        let consumed_cell = format!(
+            "{:>consumed_width$}",
+            format_tokens(rec.total_input_tokens),
+            consumed_width = consumed_width
+        );
+        let avg_tokens = rec
+            .total_input_tokens
+            .checked_div(rec.exec_count)
+            .unwrap_or(0);
+        let avg_plain = format!("{:>6}", format_tokens(avg_tokens));
+        let avg_cell = avg_plain; // no color for potential (no savings %)
+        let avg_time = rec
+            .total_time_ms
+            .checked_div(rec.exec_count as u64)
+            .unwrap_or(0);
+        let time_cell = format!(
+            "{:>time_width$}",
+            format_duration(avg_time),
+            time_width = time_width
+        );
+        let impact = mini_bar(rec.total_input_tokens, max_consumed, impact_width);
+        println!(
+            "{}  {}  {}  {}  {}  {}  {}",
+            row_idx, cmd_cell, count_cell, consumed_cell, avg_cell, time_cell, impact
+        );
+    }
+    println!("{}", "─".repeat(table_width));
+    println!();
     Ok(())
 }
 

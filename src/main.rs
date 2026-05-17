@@ -167,6 +167,9 @@ enum Commands {
         /// Show parse failure log (commands that fell back to raw execution)
         #[arg(short = 'F', long)]
         failures: bool,
+        /// Show potential commands (unregistered, executed >5 times)
+        #[arg(short = 'P', long)]
+        potential: bool,
         /// Reset all token savings stats to zero
         #[arg(long)]
         reset: bool,
@@ -1407,25 +1410,42 @@ fn run_fallback(parse_error: clap::Error) -> Result<i32> {
             }
         }
     } else {
-        // No TOML match: original passthrough behaviour (Stdio::inherit, streaming)
-        let status = core::utils::resolved_command(&args[0])
+        // No TOML match: capture output for potential tracking, then print
+        let result = core::utils::resolved_command(&args[0])
             .args(&args[1..])
             .stdin(std::process::Stdio::inherit())
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
-            .status();
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output();
 
-        match status {
-            Ok(s) => {
+        match result {
+            Ok(output) => {
+                let stdout_str = String::from_utf8_lossy(&output.stdout);
+                let stderr_str = String::from_utf8_lossy(&output.stderr);
+
+                // Print captured output (preserve original visibility)
+                if !stdout_str.is_empty() {
+                    print!("{}", stdout_str);
+                }
+                if !stderr_str.is_empty() {
+                    eprint!("{}", stderr_str);
+                }
+
+                let combined = format!("{}{}", stdout_str, stderr_str);
+                let input_tokens = core::tracking::estimate_tokens(&combined);
+                let command_name = args.first().map(|s| s.as_str()).unwrap_or(&raw_command);
+                let elapsed_ms = timer.elapsed_ms();
+                core::tracking::record_potential_silent(command_name, input_tokens, elapsed_ms);
+
                 timer.track_passthrough(&raw_command, &format!("rtk fallback: {}", raw_command));
-
                 core::tracking::record_parse_failure_silent(&raw_command, &error_message, true);
 
-                Ok(core::utils::exit_code_from_status(&s, &raw_command))
+                Ok(core::utils::exit_code_from_output(&output, &raw_command))
             }
             Err(e) => {
+                let command_name2 = args.first().map(|s| s.as_str()).unwrap_or(&raw_command);
+                core::tracking::record_potential_silent(command_name2, 0, 0);
                 core::tracking::record_parse_failure_silent(&raw_command, &error_message, false);
-                // Command not found or other OS error — single message, no duplicate Clap error
                 eprintln!("[rtk: {}]", e);
                 Ok(127)
             }
@@ -2082,6 +2102,7 @@ fn run_cli() -> Result<i32> {
             all,
             format,
             failures,
+            potential,
             reset,
             yes,
         } => {
@@ -2097,6 +2118,7 @@ fn run_cli() -> Result<i32> {
                 all,
                 &format,
                 failures,
+                potential,
                 reset,
                 yes,
                 cli.verbose,

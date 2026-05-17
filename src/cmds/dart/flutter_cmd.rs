@@ -21,7 +21,7 @@ fn run_test(args: &[String], verbose: u8) -> Result<i32> {
     }
     runner::run_filtered(
         cmd,
-        "flutter-test",
+        "flutter",
         &format!("flutter test {}", args.join(" ")),
         summarize_flutter_test,
         runner::RunOptions::with_tee("flutter-test"),
@@ -36,7 +36,7 @@ fn run_analyze(args: &[String], verbose: u8) -> Result<i32> {
     }
     runner::run_filtered(
         cmd,
-        "flutter-analyze",
+        "flutter",
         &format!("flutter analyze {}", args.join(" ")),
         summarize_dart_analyze,
         runner::RunOptions::with_tee("flutter-analyze"),

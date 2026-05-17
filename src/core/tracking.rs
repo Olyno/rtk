@@ -223,6 +223,16 @@ pub struct MonthStats {
 /// Type alias for command statistics tuple: (command, count, saved_tokens, avg_savings_pct, avg_time_ms)
 type CommandStats = (String, usize, usize, f64, u64);
 
+/// Potential command record for display.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct PotentialRecord {
+    pub command: String,
+    pub exec_count: usize,
+    pub total_input_tokens: usize,
+    pub total_time_ms: u64,
+}
+
 impl Tracker {
     /// Create a new tracker instance.
     ///
@@ -323,6 +333,25 @@ impl Tracker {
             [],
         )?;
 
+        // Potential commands: unregistered commands executed by users,
+        // tracked to identify high-value filter candidates.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS potential_commands (
+                id INTEGER PRIMARY KEY,
+                command TEXT NOT NULL UNIQUE,
+                exec_count INTEGER NOT NULL DEFAULT 1,
+                total_input_tokens INTEGER NOT NULL DEFAULT 0,
+                last_seen TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        // Migration: add total_time_ms column to potential_commands
+        let _ = conn.execute(
+            "ALTER TABLE potential_commands ADD COLUMN total_time_ms INTEGER DEFAULT 0",
+            [],
+        );
+
         Ok(Self { conn })
     }
 
@@ -372,6 +401,16 @@ impl Tracker {
         )?;
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_pf_timestamp ON parse_failures(timestamp)",
+            [],
+        )?;
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS potential_commands (
+                id INTEGER PRIMARY KEY,
+                command TEXT NOT NULL UNIQUE,
+                exec_count INTEGER NOT NULL DEFAULT 1,
+                total_input_tokens INTEGER NOT NULL DEFAULT 0,
+                last_seen TEXT NOT NULL
+            )",
             [],
         )?;
         Ok(())
@@ -446,6 +485,10 @@ impl Tracker {
             "DELETE FROM parse_failures WHERE timestamp < ?1",
             params![cutoff.to_rfc3339()],
         )?;
+        self.conn.execute(
+            "DELETE FROM potential_commands WHERE last_seen < ?1",
+            params![cutoff.to_rfc3339()],
+        )?;
         Ok(())
     }
 
@@ -456,6 +499,7 @@ impl Tracker {
                 "BEGIN;
                  DELETE FROM commands;
                  DELETE FROM parse_failures;
+                 DELETE FROM potential_commands;
                  COMMIT;",
             )
             .context("Failed to reset tracking database")?;
@@ -481,6 +525,64 @@ impl Tracker {
         )?;
         self.cleanup_old()?;
         Ok(())
+    }
+
+    /// Record a potential command (unregistered, executed via fallback).
+    ///
+    /// Tracks how many times each unknown command is executed and how many
+    /// input tokens it would consume, to identify high-value filter candidates.
+    pub fn record_potential(
+        &self,
+        command: &str,
+        input_tokens: usize,
+        elapsed_ms: u64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO potential_commands (command, exec_count, total_input_tokens, total_time_ms, last_seen)
+             VALUES (?1, 1, ?2, ?3, ?4)
+             ON CONFLICT(command) DO UPDATE SET
+                exec_count = exec_count + 1,
+                total_input_tokens = total_input_tokens + ?2,
+                total_time_ms = total_time_ms + ?3,
+                last_seen = ?4",
+            params![command, input_tokens as i64, elapsed_ms as i64, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// Get potential commands summary.
+    ///
+    /// Returns commands executed more than `min_count` times, sorted by
+    /// total input tokens descending. Also cleans up commands that now have
+    /// a registered RTK filter (appear in the `commands` table).
+    pub fn get_potential_summary(&self, min_count: usize) -> Result<Vec<PotentialRecord>> {
+        // Remove potential entries that now have an RTK filter
+        let _ = self.conn.execute(
+            "DELETE FROM potential_commands WHERE command IN (
+                SELECT DISTINCT rtk_cmd FROM commands
+             )",
+            [],
+        );
+        let mut stmt = self.conn.prepare(
+            "SELECT command, exec_count, total_input_tokens, total_time_ms
+             FROM potential_commands
+             WHERE exec_count > ?1
+             ORDER BY total_input_tokens DESC
+             LIMIT 30",
+        )?;
+        let rows = stmt.query_map(params![min_count as i64], |row| {
+            Ok(PotentialRecord {
+                command: row.get(0)?,
+                exec_count: row.get::<_, i64>(1)? as usize,
+                total_input_tokens: row.get::<_, i64>(2)? as usize,
+                total_time_ms: row.get::<_, i64>(3)? as u64,
+            })
+        })?;
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(row?);
+        }
+        Ok(records)
     }
 
     /// Get parse failure summary for `rtk gain --failures`.
@@ -1262,6 +1364,13 @@ pub fn record_parse_failure_silent(raw_command: &str, error_message: &str, succe
     }
 }
 
+/// Record a potential command silently (best-effort, log-only).
+pub fn record_potential_silent(command: &str, input_tokens: usize, elapsed_ms: u64) {
+    if let Ok(tracker) = Tracker::new() {
+        let _ = tracker.record_potential(command, input_tokens, elapsed_ms);
+    }
+}
+
 /// Estimate token count from text using ~4 chars = 1 token heuristic.
 ///
 /// This is a fast approximation suitable for tracking purposes.
@@ -1327,6 +1436,11 @@ impl TimedExecution {
         Self {
             start: Instant::now(),
         }
+    }
+
+    /// Elapsed time in milliseconds since `start()`.
+    pub fn elapsed_ms(&self) -> u64 {
+        self.start.elapsed().as_millis() as u64
     }
 
     /// Track the command with elapsed time and token counts.
