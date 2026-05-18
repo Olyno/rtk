@@ -13,6 +13,7 @@ use std::process::Command;
 #[derive(Debug, Clone, Copy)]
 pub enum ContainerCmd {
     DockerPs,
+    DockerPsAll,
     DockerImages,
     DockerLogs,
     KubectlPods,
@@ -23,6 +24,7 @@ pub enum ContainerCmd {
 pub fn run(cmd: ContainerCmd, args: &[String], verbose: u8) -> Result<i32> {
     match cmd {
         ContainerCmd::DockerPs => docker_ps(verbose),
+        ContainerCmd::DockerPsAll => docker_ps_all(verbose),
         ContainerCmd::DockerImages => docker_images(verbose),
         ContainerCmd::DockerLogs => docker_logs(args, verbose),
         ContainerCmd::KubectlPods => kubectl_pods(args, verbose),
@@ -59,13 +61,10 @@ fn docker_ps(_verbose: u8) -> Result<i32> {
         .map(|r| r.stdout)
         .unwrap_or_default();
 
-    // One structured call over *all* containers (`-a`) — splitting on the State
-    // field lets us list crashed/exited ones too, which plain `docker ps` hides.
     let result = exec_capture(resolved_command("docker").args([
         "ps",
-        "-a",
         "--format",
-        "{{.State}}\t{{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}",
+        "{{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}",
     ]))
     .context("Failed to run docker ps")?;
 
@@ -75,83 +74,31 @@ fn docker_ps(_verbose: u8) -> Result<i32> {
         return Ok(result.exit_code);
     }
 
-    let format_line = |parts: &[&str], with_ports: bool| -> Option<String> {
-        if parts.len() < 5 {
-            return None;
-        }
-        let id = &parts[1][..12.min(parts[1].len())];
-        let name = parts[2];
-        // Keep the Status verbatim — it carries health ("Up 4s (unhealthy)")
-        // and exit-code/restart info an agent needs to judge service health.
-        let status = parts[3].trim();
-        let short_image = parts[4].split('/').next_back().unwrap_or("");
-        let port_suffix = if with_ports {
-            let ports = compact_ports(parts.get(5).unwrap_or(&""));
-            if ports == "-" {
-                String::new()
-            } else {
-                format!(" [{}]", ports)
-            }
-        } else {
-            String::new()
-        };
-        Some(format!(
-            "  {} {} ({}) {}{}\n",
-            id, name, short_image, status, port_suffix
-        ))
-    };
+    let stdout = result.stdout;
+    let mut rtk = String::new();
 
-    let mut running: Vec<Vec<&str>> = Vec::new();
-    let mut stopped: Vec<Vec<&str>> = Vec::new();
-    for line in result.stdout.lines().filter(|l| !l.trim().is_empty()) {
-        let parts: Vec<&str> = line.split('\t').collect();
-        let state = parts.first().copied().unwrap_or("");
-        if matches!(state, "running" | "restarting") {
-            running.push(parts);
-        } else {
-            stopped.push(parts);
-        }
+    if stdout.trim().is_empty() {
+        rtk.push_str("[docker] 0 containers");
+        println!("{}", rtk);
+        timer.track("docker ps", "rtk docker ps", &raw, &rtk);
+        return Ok(0);
     }
 
     const MAX_CONTAINERS: usize = CAP_LIST;
+    let lines: Vec<String> = stdout
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|line| format_container_line(line, true))
+        .collect();
 
-    // Pre-build compressed lines once; assemble full (for tee) and capped (for display) from them.
-    let running_lines: Vec<String> = running.iter().filter_map(|p| format_line(p, true)).collect();
-    let stopped_lines: Vec<String> = stopped.iter().filter_map(|p| format_line(p, false)).collect();
-
-    let truncated = running_lines.len() > MAX_CONTAINERS || stopped_lines.len() > MAX_CONTAINERS;
-
-    let mut full_rtk = String::new();
-    full_rtk.push_str(&format!("[docker] {} running:\n", running_lines.len()));
-    for l in &running_lines {
-        full_rtk.push_str(l);
+    rtk.push_str(&format!("[docker] {} containers:\n", lines.len()));
+    for entry in lines.iter().take(MAX_CONTAINERS) {
+        rtk.push_str(entry);
     }
-    if !stopped_lines.is_empty() {
-        full_rtk.push_str(&format!("[docker] {} stopped/exited:\n", stopped_lines.len()));
-        for l in &stopped_lines {
-            full_rtk.push_str(l);
-        }
-    }
-
-    let mut rtk = String::new();
-    rtk.push_str(&format!("[docker] {} running:\n", running_lines.len()));
-    for l in running_lines.iter().take(MAX_CONTAINERS) {
-        rtk.push_str(l);
-    }
-    if running_lines.len() > MAX_CONTAINERS {
-        rtk.push_str(&format!("  … +{} more\n", running_lines.len() - MAX_CONTAINERS));
-    }
-    if !stopped_lines.is_empty() {
-        rtk.push_str(&format!("[docker] {} stopped/exited:\n", stopped_lines.len()));
-        for l in stopped_lines.iter().take(MAX_CONTAINERS) {
-            rtk.push_str(l);
-        }
-        if stopped_lines.len() > MAX_CONTAINERS {
-            rtk.push_str(&format!("  … +{} more\n", stopped_lines.len() - MAX_CONTAINERS));
-        }
-    }
-    if truncated {
-        if let Some(hint) = crate::core::tee::force_tee_hint(&full_rtk, "docker-ps") {
+    if lines.len() > MAX_CONTAINERS {
+        rtk.push_str(&format!("  … +{} more\n", lines.len() - MAX_CONTAINERS));
+        let full: String = lines.concat();
+        if let Some(hint) = crate::core::tee::force_tee_hint(&full, "docker-ps") {
             rtk.push_str(&format!("{}\n", hint));
         }
     }
@@ -159,6 +106,112 @@ fn docker_ps(_verbose: u8) -> Result<i32> {
     print!("{}", rtk);
     timer.track("docker ps", "rtk docker ps", &raw, &rtk);
     Ok(0)
+}
+
+fn docker_ps_all(_verbose: u8) -> Result<i32> {
+    let timer = tracking::TimedExecution::start();
+
+    let raw = exec_capture(resolved_command("docker").args(["ps", "-a"]))
+        .map(|r| r.stdout)
+        .unwrap_or_default();
+
+    let result = exec_capture(resolved_command("docker").args([
+        "ps",
+        "-a",
+        "--format",
+        "{{.State}}\t{{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}",
+    ]))
+    .context("Failed to run docker ps -a")?;
+
+    if !result.success() {
+        eprint!("{}", result.stderr);
+        timer.track("docker ps -a", "rtk docker ps -a", &raw, &raw);
+        return Ok(result.exit_code);
+    }
+
+    let mut running_lines: Vec<String> = Vec::new();
+    let mut stopped_lines: Vec<String> = Vec::new();
+    for line in result.stdout.lines().filter(|l| !l.trim().is_empty()) {
+        let parts: Vec<&str> = line.split('\t').collect();
+        let state = parts.first().copied().unwrap_or("");
+        let is_running = matches!(state, "running" | "restarting");
+        if let Some(entry) = format_container_line_from_parts(&parts[1..], is_running) {
+            if is_running {
+                running_lines.push(entry);
+            } else {
+                stopped_lines.push(entry);
+            }
+        }
+    }
+
+    const MAX_CONTAINERS: usize = 20;
+    let truncated = running_lines.len() > MAX_CONTAINERS || stopped_lines.len() > MAX_CONTAINERS;
+
+    let mut rtk = String::new();
+    rtk.push_str(&format!("[docker] {} running:\n", running_lines.len()));
+    for l in running_lines.iter().take(MAX_CONTAINERS) {
+        rtk.push_str(l);
+    }
+    if running_lines.len() > MAX_CONTAINERS {
+        rtk.push_str(&format!(
+            "  … +{} more\n",
+            running_lines.len() - MAX_CONTAINERS
+        ));
+    }
+    if !stopped_lines.is_empty() {
+        rtk.push_str(&format!(
+            "[docker] {} stopped/exited:\n",
+            stopped_lines.len()
+        ));
+        for l in stopped_lines.iter().take(MAX_CONTAINERS) {
+            rtk.push_str(l);
+        }
+        if stopped_lines.len() > MAX_CONTAINERS {
+            rtk.push_str(&format!(
+                "  … +{} more\n",
+                stopped_lines.len() - MAX_CONTAINERS
+            ));
+        }
+    }
+    if truncated {
+        let full: String = running_lines.iter().chain(stopped_lines.iter()).cloned().collect();
+        if let Some(hint) = crate::core::tee::force_tee_hint(&full, "docker-ps-a") {
+            rtk.push_str(&format!("{}\n", hint));
+        }
+    }
+
+    print!("{}", rtk);
+    timer.track("docker ps -a", "rtk docker ps -a", &raw, &rtk);
+    Ok(0)
+}
+
+fn format_container_line(line: &str, with_ports: bool) -> Option<String> {
+    let parts: Vec<&str> = line.split('\t').collect();
+    format_container_line_from_parts(&parts, with_ports)
+}
+
+fn format_container_line_from_parts(parts: &[&str], with_ports: bool) -> Option<String> {
+    if parts.len() < 4 {
+        return None;
+    }
+    let id = &parts[0][..12.min(parts[0].len())];
+    let name = parts[1];
+    let status = parts[2].trim();
+    let short_image = parts[3].split('/').next_back().unwrap_or("");
+    let port_suffix = if with_ports {
+        let ports = compact_ports(parts.get(4).unwrap_or(&""));
+        if ports == "-" {
+            String::new()
+        } else {
+            format!(" [{}]", ports)
+        }
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "  {} {} ({}) {}{}\n",
+        id, name, short_image, status, port_suffix
+    ))
 }
 
 fn docker_images(_verbose: u8) -> Result<i32> {
@@ -603,13 +656,15 @@ pub fn run_docker_passthrough(args: &[OsString], verbose: u8) -> Result<i32> {
     crate::core::runner::run_passthrough("docker", args, verbose)
 }
 
-/// Run `docker compose ps` with compact output
-pub fn run_compose_ps(verbose: u8) -> Result<i32> {
+/// Run `docker compose ps` (or `docker compose ps -a`) with compact output
+pub fn run_compose_ps(all: bool, verbose: u8) -> Result<i32> {
     let timer = tracking::TimedExecution::start();
 
-    // Use `-a` so stopped/exited services stay visible — a worker that crashed
-    // on startup must not silently vanish from the agent's view.
-    let raw_result = exec_capture(resolved_command("docker").args(["compose", "ps", "-a"]))
+    let mut raw_args: Vec<&str> = vec!["compose", "ps"];
+    if all {
+        raw_args.push("-a");
+    }
+    let raw_result = exec_capture(resolved_command("docker").args(&raw_args))
         .context("Failed to run docker compose ps")?;
 
     if !raw_result.success() {
@@ -618,15 +673,13 @@ pub fn run_compose_ps(verbose: u8) -> Result<i32> {
     }
     let raw = raw_result.stdout;
 
-    // Structured output for parsing (same pattern as docker_ps)
-    let result = exec_capture(resolved_command("docker").args([
-        "compose",
-        "ps",
-        "-a",
-        "--format",
-        "{{.Name}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}",
-    ]))
-    .context("Failed to run docker compose ps --format")?;
+    let mut format_args: Vec<&str> = vec!["compose", "ps"];
+    if all {
+        format_args.push("-a");
+    }
+    format_args.extend(["--format", "{{.Name}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"]);
+    let result = exec_capture(resolved_command("docker").args(&format_args))
+        .context("Failed to run docker compose ps --format")?;
 
     if !result.success() {
         eprintln!("{}", result.stderr);
@@ -640,7 +693,9 @@ pub fn run_compose_ps(verbose: u8) -> Result<i32> {
 
     let rtk = format_compose_ps(&structured);
     println!("{}", rtk);
-    timer.track("docker compose ps", "rtk docker compose ps", &raw, &rtk);
+    let label = if all { "docker compose ps -a" } else { "docker compose ps" };
+    let rtk_label = if all { "rtk docker compose ps -a" } else { "rtk docker compose ps" };
+    timer.track(label, rtk_label, &raw, &rtk);
     Ok(0)
 }
 

@@ -187,19 +187,36 @@ pub fn filter_ruff_check_json(output: &str) -> String {
         ));
     }
 
-    // List all violations with file:line:col — format compression (JSON → one
-    // liner) already saves ~10x; capping would hide locations the agent needs
-    // to navigate directly to each issue.
+    const MAX_VIOLATIONS: usize = 50;
+    let violation_lines: Vec<String> = diagnostics
+        .iter()
+        .map(|diag| {
+            format!(
+                "  {}:{}:{} {} {}\n",
+                compact_path(&diag.filename),
+                diag.location.row,
+                diag.location.column,
+                diag.code,
+                truncate(diag.message.trim(), 100),
+            )
+        })
+        .collect();
+
     result.push_str("\nViolations:\n");
-    for diag in &diagnostics {
+    for line in violation_lines.iter().take(MAX_VIOLATIONS) {
+        result.push_str(line);
+    }
+    if violation_lines.len() > MAX_VIOLATIONS {
         result.push_str(&format!(
-            "  {}:{}:{} {} {}\n",
-            compact_path(&diag.filename),
-            diag.location.row,
-            diag.location.column,
-            diag.code,
-            truncate(diag.message.trim(), 100),
+            "  … +{} more\n",
+            violation_lines.len() - MAX_VIOLATIONS
         ));
+        let full: String = violation_lines.concat();
+        if let Some(hint) =
+            crate::core::tee::force_tee_tail_hint(&full, "ruff-check", MAX_VIOLATIONS + 1)
+        {
+            result.push_str(&format!("  {}\n", hint));
+        }
     }
 
     if fixable_count > 0 {
@@ -390,6 +407,39 @@ Would reformat: tests/test_utils.py
         assert!(result.contains("main.py"));
         assert!(result.contains("test_utils.py"));
         assert!(result.contains("3 files already formatted"));
+    }
+
+    #[test]
+    fn test_filter_ruff_check_caps_violations_and_emits_hint() {
+        // Mirror ruff's pretty-printed JSON shape so the input-vs-output
+        // comparison reflects what a real `ruff check --output-format=json` emits.
+        let mut diags = Vec::new();
+        for i in 0..200 {
+            diags.push(format!(
+                "  {{\n    \"code\": \"F401\",\n    \"message\": \"`module_{i}` imported but unused\",\n    \"location\": {{\"row\": {i}, \"column\": 4}},\n    \"end_location\": {{\"row\": {i}, \"column\": 20}},\n    \"filename\": \"/Users/dev/project/src/feature_{i}.py\",\n    \"fix\": null\n  }}"
+            ));
+        }
+        let json = format!("[\n{}\n]", diags.join(",\n"));
+        let result = filter_ruff_check_json(&json);
+
+        let in_section = result.split("Violations:").nth(1).unwrap_or("");
+        let listed = in_section
+            .lines()
+            .filter(|l| l.trim().starts_with("src/"))
+            .count();
+        assert!(listed <= 50, "violations cap not enforced: got {listed}");
+        assert!(
+            result.contains("… +150 more"),
+            "missing '+N more' indicator"
+        );
+
+        let raw_tokens = json.split_whitespace().count();
+        let out_tokens = result.split_whitespace().count();
+        let savings = 100.0 - (out_tokens as f64 / raw_tokens as f64) * 100.0;
+        assert!(
+            savings >= 60.0,
+            "token savings dropped below 60%: {savings:.1}%"
+        );
     }
 
     #[test]

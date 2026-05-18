@@ -419,6 +419,37 @@ collected 0 items
     }
 
     #[test]
+    fn test_filter_pytest_xfail_caps_and_tee_hint() {
+        let mut lines = String::from("=== test session starts ===\ncollected 30 items\n\n");
+        lines.push_str("test_x.py ");
+        for _ in 0..15 {
+            lines.push('x');
+        }
+        lines.push_str("\n\n=== short test summary info ===\n");
+        for i in 0..15 {
+            lines.push_str(&format!(
+                "XFAIL test_x.py::test_case_{i} - known issue #{i}\n"
+            ));
+        }
+        lines.push_str("=== 0 passed, 15 xfailed in 0.05s ===\n");
+
+        let result = filter_pytest_output(&lines);
+        let xfail_in_section = result
+            .split("Expected-failure outcomes:")
+            .nth(1)
+            .unwrap_or("");
+        let listed = xfail_in_section
+            .lines()
+            .filter(|l| l.trim().starts_with("XFAIL"))
+            .count();
+        assert!(
+            listed <= 10,
+            "MAX_XFAIL cap not enforced: listed {listed}"
+        );
+        assert!(result.contains("… +5 more"), "missing '+N more': {result}");
+    }
+
+    #[test]
     fn test_filter_pytest_xfail_xpass() {
         let output = r#"=== test session starts ===
 collected 5 items

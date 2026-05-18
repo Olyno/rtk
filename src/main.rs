@@ -928,7 +928,10 @@ enum PnpmCommands {
 #[derive(Debug, Subcommand)]
 enum DockerCommands {
     /// List running containers
-    Ps,
+    Ps {
+        #[arg(short = 'a', long)]
+        all: bool,
+    },
     /// List images
     Images,
     /// Show container logs (deduplicated)
@@ -946,7 +949,10 @@ enum DockerCommands {
 #[derive(Debug, Subcommand)]
 enum ComposeCommands {
     /// List compose services (compact)
-    Ps,
+    Ps {
+        #[arg(short = 'a', long)]
+        all: bool,
+    },
     /// Show compose logs (deduplicated)
     Logs {
         /// Optional service name
@@ -1914,8 +1920,13 @@ fn run_cli() -> Result<i32> {
         },
 
         Commands::Docker { command } => match command {
-            DockerCommands::Ps => {
-                container::run(container::ContainerCmd::DockerPs, &[], cli.verbose)?
+            DockerCommands::Ps { all } => {
+                let cmd = if all {
+                    container::ContainerCmd::DockerPsAll
+                } else {
+                    container::ContainerCmd::DockerPs
+                };
+                container::run(cmd, &[], cli.verbose)?
             }
             DockerCommands::Images => {
                 container::run(container::ContainerCmd::DockerImages, &[], cli.verbose)?
@@ -1924,7 +1935,7 @@ fn run_cli() -> Result<i32> {
                 container::run(container::ContainerCmd::DockerLogs, &[c], cli.verbose)?
             }
             DockerCommands::Compose { command: compose } => match compose {
-                ComposeCommands::Ps => container::run_compose_ps(cli.verbose)?,
+                ComposeCommands::Ps { all } => container::run_compose_ps(all, cli.verbose)?,
                 ComposeCommands::Logs { service, tail } => {
                     container::run_compose_logs(service.as_deref(), tail, cli.verbose)?
                 }
