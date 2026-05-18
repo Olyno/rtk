@@ -549,7 +549,7 @@
 547|    // Post-process: truncate long messages, cap lines only if RTK set the default
 548|
 
-... [OUTPUT TRUNCATED - 69894 chars omitted out of 119894 total] ...
+... [OUTPUT TRUNCATED - 72 chars omitted out of 50072 total] ...
 
 "experiment"),
             "fork branch shown: {}",

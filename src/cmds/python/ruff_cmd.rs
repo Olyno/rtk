@@ -226,13 +226,15 @@ pub fn filter_ruff_check_json(output: &str) -> String {
     result.push_str("\nViolations:\n");
     for diag in diagnostics.iter().take(MAX_VIOLATIONS) {
         result.push_str(&format!(
-            "  {}:{}:{} {} {}\n",
-            compact_path(&diag.filename),
-            diag.location.row,
-            diag.location.column,
-            diag.code,
-            truncate(diag.message.trim(), 100),
+            "  … +{} more\n",
+            violation_lines.len() - MAX_VIOLATIONS
         ));
+        let full: String = violation_lines.concat();
+        if let Some(hint) =
+            crate::core::tee::force_tee_tail_hint(&full, "ruff-check", MAX_VIOLATIONS + 1)
+        {
+            result.push_str(&format!("  {}\n", hint));
+        }
     }
     if diagnostics.len() > MAX_VIOLATIONS {
         result.push_str(&format!(

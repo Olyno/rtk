@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 1|//! Filters Docker and kubectl output into compact summaries.
 2|
 3|use crate::core::runner::{self, RunOptions};
@@ -541,176 +540,13 @@
 621|                String::new()
 622|            } 
 
-... [OUTPUT TRUNCATED - 71 chars omitted out of 50071 total] ...
+... [OUTPUT TRUNCATED - 5332 chars omitted out of 55332 total] ...
 
-rt!(out.contains("12.3s"), "should show total build time");
-1004|        assert!(out.contains("web"), "should show service name");
-1005|        assert!(out.len() < raw.len(), "should be shorter than raw");
-1006|    }
-1007|
-1008|    #[test]
-1009|    fn test_format_compose_build_empty() {
-1010|        let out = format_compose_build("");
-1011|        assert!(
-1012|            !out.is_empty(),
-1013|            "should produce output even for empty input"
-1014|        );
-1015|    }
-1016|
-1017|    // ── compact_ports (existing, previously untested) ──────
-1018|
-1019|    #[test]
-1020|    fn test_compact_ports_empty() {
-1021|        assert_eq!(compact_ports(""), "-");
-1022|    }
-1023|
-1024|    #[test]
-1025|    fn test_compact_ports_single() {
-1026|        let result = compact_ports("0.0.0.0:8080->80/tcp");
-1027|        assert!(result.contains("8080"));
-1028|    }
-1029|
-1030|    #[test]
-1031|    fn test_compact_ports_many() {
-1032|        let result = compact_ports("0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp, 0.0.0.0:8080->8080/tcp, 0.0.0.0:9090->9090/tcp");
-1033|        assert!(result.contains("…"), "should truncate for >3 ports");
-1034|    }
-1035|
-1036|    #[test]
-1037|    fn test_kubectl_get_target_pods_aliases() {
-1038|        for resource in ["po", "pod", "pods"] {
-1039|            let args = vec![resource.to_string(), "-n".to_string(), "default".to_string()];
-1040|
-1041|            assert_eq!(
-1042|                kubectl_get_target(&args),
-1043|                Some(("pods", &args[1..])),
-1044|                "failed for {resource}"
-1045|            );
-1046|        }
-1047|    }
-1048|
-1049|    #[test]
-1050|    fn test_kubectl_get_target_services_aliases() {
-1051|        for resource in ["svc", "service", "services"] {
-1052|            let args = vec![resource.to_string(), "-A".to_string()];
-1053|
-1054|            assert_eq!(
-1055|                kubectl_get_target(&args),
-1056|                Some(("services", &args[1..])),
-1057|                "failed for {resource}"
-1058|            );
-1059|        }
-1060|    }
-1061|
-1062|    #[test]
-1063|    fn test_kubectl_get_target_unsupported_resource() {
-1064|        let args = vec!["deployments".to_string()];
-1065|
-1066|        assert_eq!(kubectl_get_target(&args), None);
-1067|    }
-1068|
-1069|    #[test]
-1070|    fn test_kubectl_get_target_respects_output_flags() {
-1071|        for output_flag in ["-o", "-owide", "--output", "--output=json"] {
-1072|            let args = vec![
-1073|                "pods".to_string(),
-1074|                output_flag.to_string(),
-1075|                "wide".to_string(),
-1076|            ];
-1077|
-1078|            assert_eq!(
-1079|                kubectl_get_target(&args),
-1080|                None,
-1081|                "should pass through {output_flag}"
-1082|            );
-1083|        }
-1084|    }
-1085|}
-1086|
-=======
-//! Filters Docker and kubectl output into compact summaries.
-
-use crate::core::runner::{self, RunOptions};
-use crate::core::stream::exec_capture;
-use crate::core::tracking;
-use crate::core::utils::resolved_command;
-use anyhow::{Context, Result};
-use serde_json::Value;
-use std::ffi::OsString;
-use std::process::Command;
-
-#[derive(Debug, Clone, Copy)]
-pub enum ContainerCmd {
-    DockerPs,
-    DockerImages,
-    DockerLogs,
-    KubectlPods,
-    KubectlServices,
-    KubectlLogs,
-}
-
-pub fn run(cmd: ContainerCmd, args: &[String], verbose: u8) -> Result<i32> {
-    match cmd {
-        ContainerCmd::DockerPs => docker_ps(verbose),
-        ContainerCmd::DockerImages => docker_images(verbose),
-        ContainerCmd::DockerLogs => docker_logs(args, verbose),
-        ContainerCmd::KubectlPods => kubectl_pods(args, verbose),
-        ContainerCmd::KubectlServices => kubectl_services(args, verbose),
-        ContainerCmd::KubectlLogs => kubectl_logs(args, verbose),
-    }
-}
-
-fn run_kubectl_json<F>(cmd: Command, label: &str, filter_fn: F) -> Result<i32>
-where
-    F: Fn(&Value) -> String,
-{
-    runner::run_filtered(
-        cmd,
-        "kubectl",
-        label,
-        |stdout| match serde_json::from_str::<Value>(stdout) {
-            Ok(json) => filter_fn(&json),
-            Err(e) => {
-                eprintln!("[rtk] kubectl: JSON parse failed: {}", e);
-                stdout.to_string()
-            }
-        },
-        RunOptions::stdout_only()
-            .early_exit_on_failure()
-            .no_trailing_newline(),
-    )
-}
-
-fn docker_ps(_verbose: u8) -> Result<i32> {
-    let timer = tracking::TimedExecution::start();
-
-    let raw = exec_capture(resolved_command("docker").args(["ps"]))
-        .map(|r| r.stdout)
-        .unwrap_or_default();
-
-    let result = exec_capture(resolved_command("docker").args([
-        "ps",
-        "--format",
-        "{{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}",
-    ]))
-    .context("Failed to run docker ps")?;
-
-    if !result.success() {
-        eprint!("{}", result.stderr);
-        timer.track("docker ps", "rtk docker ps", &raw, &raw);
-        return Ok(result.exit_code);
-    }
-
-    let stdout = result.stdout;
-    let mut rtk = String::new();
-
-    if stdout.trim().is_empty() {
-        rtk.push_str("[docker] 0 containers");
-        println!("{}", rtk);
-        timer.track("docker ps", "rtk docker ps", &raw, &rtk);
+er ps", "rtk docker ps", &raw, &rtk);
         return Ok(0);
     }
 
+<<<<<<< HEAD
     let count = stdout.lines().count();
     rtk.push_str(&format!("[docker] {} containers:\n", count));
 
@@ -743,6 +579,112 @@ fn docker_ps(_verbose: u8) -> Result<i32> {
     print!("{}", rtk);
     timer.track("docker ps", "rtk docker ps", &raw, &rtk);
     Ok(0)
+}
+
+fn docker_ps_all(_verbose: u8) -> Result<i32> {
+    let timer = tracking::TimedExecution::start();
+
+    let raw = exec_capture(resolved_command("docker").args(["ps", "-a"]))
+        .map(|r| r.stdout)
+        .unwrap_or_default();
+
+    let result = exec_capture(resolved_command("docker").args([
+        "ps",
+        "-a",
+        "--format",
+        "{{.State}}\t{{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}",
+    ]))
+    .context("Failed to run docker ps -a")?;
+
+    if !result.success() {
+        eprint!("{}", result.stderr);
+        timer.track("docker ps -a", "rtk docker ps -a", &raw, &raw);
+        return Ok(result.exit_code);
+    }
+
+    let mut running_lines: Vec<String> = Vec::new();
+    let mut stopped_lines: Vec<String> = Vec::new();
+    for line in result.stdout.lines().filter(|l| !l.trim().is_empty()) {
+        let parts: Vec<&str> = line.split('\t').collect();
+        let state = parts.first().copied().unwrap_or("");
+        let is_running = matches!(state, "running" | "restarting");
+        if let Some(entry) = format_container_line_from_parts(&parts[1..], is_running) {
+            if is_running {
+                running_lines.push(entry);
+            } else {
+                stopped_lines.push(entry);
+            }
+        }
+    }
+
+    const MAX_CONTAINERS: usize = 20;
+    let truncated = running_lines.len() > MAX_CONTAINERS || stopped_lines.len() > MAX_CONTAINERS;
+
+    let mut rtk = String::new();
+    rtk.push_str(&format!("[docker] {} running:\n", running_lines.len()));
+    for l in running_lines.iter().take(MAX_CONTAINERS) {
+        rtk.push_str(l);
+    }
+    if running_lines.len() > MAX_CONTAINERS {
+        rtk.push_str(&format!(
+            "  … +{} more\n",
+            running_lines.len() - MAX_CONTAINERS
+        ));
+    }
+    if !stopped_lines.is_empty() {
+        rtk.push_str(&format!(
+            "[docker] {} stopped/exited:\n",
+            stopped_lines.len()
+        ));
+        for l in stopped_lines.iter().take(MAX_CONTAINERS) {
+            rtk.push_str(l);
+        }
+        if stopped_lines.len() > MAX_CONTAINERS {
+            rtk.push_str(&format!(
+                "  … +{} more\n",
+                stopped_lines.len() - MAX_CONTAINERS
+            ));
+        }
+    }
+    if truncated {
+        let full: String = running_lines.iter().chain(stopped_lines.iter()).cloned().collect();
+        if let Some(hint) = crate::core::tee::force_tee_hint(&full, "docker-ps-a") {
+            rtk.push_str(&format!("{}\n", hint));
+        }
+    }
+
+    print!("{}", rtk);
+    timer.track("docker ps -a", "rtk docker ps -a", &raw, &rtk);
+    Ok(0)
+}
+
+fn format_container_line(line: &str, with_ports: bool) -> Option<String> {
+    let parts: Vec<&str> = line.split('\t').collect();
+    format_container_line_from_parts(&parts, with_ports)
+}
+
+fn format_container_line_from_parts(parts: &[&str], with_ports: bool) -> Option<String> {
+    if parts.len() < 4 {
+        return None;
+    }
+    let id = &parts[0][..12.min(parts[0].len())];
+    let name = parts[1];
+    let status = parts[2].trim();
+    let short_image = parts[3].split('/').next_back().unwrap_or("");
+    let port_suffix = if with_ports {
+        let ports = compact_ports(parts.get(4).unwrap_or(&""));
+        if ports == "-" {
+            String::new()
+        } else {
+            format!(" [{}]", ports)
+        }
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "  {} {} ({}) {}{}\n",
+        id, name, short_image, status, port_suffix
+    ))
 }
 
 fn docker_images(_verbose: u8) -> Result<i32> {
@@ -1152,8 +1094,8 @@ pub fn run_docker_passthrough(args: &[OsString], verbose: u8) -> Result<i32> {
     crate::core::runner::run_passthrough("docker", args, verbose)
 }
 
-/// Run `docker compose ps` with compact output
-pub fn run_compose_ps(verbose: u8) -> Result<i32> {
+/// Run `docker compose ps` (or `docker compose ps -a`) with compact output
+pub fn run_compose_ps(all: bool, verbose: u8) -> Result<i32> {
     let timer = tracking::TimedExecution::start();
 
     // Raw output for token tracking
@@ -1187,7 +1129,9 @@ pub fn run_compose_ps(verbose: u8) -> Result<i32> {
 
     let rtk = format_compose_ps(&structured);
     println!("{}", rtk);
-    timer.track("docker compose ps", "rtk docker compose ps", &raw, &rtk);
+    let label = if all { "docker compose ps -a" } else { "docker compose ps" };
+    let rtk_label = if all { "rtk docker compose ps -a" } else { "rtk docker compose ps" };
+    timer.track(label, rtk_label, &raw, &rtk);
     Ok(0)
 }
 

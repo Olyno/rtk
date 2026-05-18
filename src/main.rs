@@ -1,5 +1,6 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 1|mod analytics;
 2|mod cmds;
 3|mod core;
@@ -574,11 +575,11 @@
 575|    /// Mypy type checker with grouped error output
 576|    Mypy {
 577|        /// Mypy arguments
-578|        #[arg(trailing_var_arg = true, allow_hyphen_value
+578|        #[arg(trailing_var_arg = true, allow
 
-... [OUTPUT TRUNCATED - 72 chars omitted out of 50072 total] ...
+... [OUTPUT TRUNCATED - 76470 chars omitted out of 126470 total] ...
 
-ts[1..].to_vec())
+violations at 50)
                 } else {
                     (full.into_owned(), vec![])
                 }
