@@ -3682,7 +3682,8 @@ const COPILOT_HOOK_JSON: &str = r#"{
 }
 "#;
 
-const COPILOT_INSTRUCTIONS: &str = r#"# RTK — Token-Optimized CLI
+const COPILOT_INSTRUCTIONS: &str = r#"<!-- rtk-instructions v2 -->
+# RTK — Token-Optimized CLI
 
 **rtk** is a CLI proxy that filters and compresses command outputs, saving 60-90% tokens.
 
@@ -3707,7 +3708,81 @@ rtk gain --history    # Per-command savings history
 rtk discover          # Find missed rtk opportunities
 rtk proxy <cmd>       # Run raw (no filtering) but track usage
 ```
+<!-- /rtk-instructions -->
 "#;
+
+/// Upsert the RTK marker block in `copilot-instructions.md`.
+///
+/// Preserves user content outside the `<!-- rtk-instructions v2 --> ...
+/// <!-- /rtk-instructions -->` markers; only RTK-owned content between the
+/// markers is added/updated/left untouched depending on prior state.
+/// Refuses to modify malformed files (opening marker without closing).
+fn upsert_copilot_instructions(path: &Path, ctx: InitContext) -> Result<()> {
+    let InitContext { verbose, dry_run } = ctx;
+
+    let existing = if path.exists() {
+        fs::read_to_string(path)
+            .with_context(|| format!("Failed to read {}", path.display()))?
+    } else {
+        String::new()
+    };
+
+    let (new_content, action) = upsert_rtk_block(&existing, COPILOT_INSTRUCTIONS);
+
+    match action {
+        RtkBlockUpsert::Added => {
+            if dry_run {
+                println!(
+                    "[dry-run] would add Copilot instructions to {}",
+                    path.display()
+                );
+            } else {
+                atomic_write(path, &new_content)
+                    .with_context(|| format!("Failed to write {}", path.display()))?;
+                if verbose > 0 {
+                    eprintln!("Added Copilot instructions to {}", path.display());
+                }
+            }
+        }
+        RtkBlockUpsert::Updated => {
+            if dry_run {
+                println!(
+                    "[dry-run] would update Copilot instructions in {}",
+                    path.display()
+                );
+            } else {
+                atomic_write(path, &new_content)
+                    .with_context(|| format!("Failed to write {}", path.display()))?;
+                if verbose > 0 {
+                    eprintln!("Updated Copilot instructions in {}", path.display());
+                }
+            }
+        }
+        RtkBlockUpsert::Unchanged => {
+            if verbose > 0 {
+                eprintln!(
+                    "Copilot instructions already up to date: {}",
+                    path.display()
+                );
+            }
+        }
+        RtkBlockUpsert::Malformed => {
+            eprintln!(
+                "[warn] Found '{}' without closing marker in {}",
+                RTK_BLOCK_START,
+                path.display()
+            );
+            eprintln!("    Action: Manually remove the incomplete block, then re-run:");
+            eprintln!("            rtk init --copilot");
+            anyhow::bail!(
+                "Refusing to modify malformed copilot-instructions.md at {}",
+                path.display()
+            );
+        }
+    }
+
+    Ok(())
+}
 
 /// Entry point for `rtk init --copilot`
 pub fn run_copilot(ctx: InitContext) -> Result<()> {
@@ -3724,14 +3799,9 @@ pub fn run_copilot(ctx: InitContext) -> Result<()> {
     let hook_path = hooks_dir.join("rtk-rewrite.json");
     write_if_changed(&hook_path, COPILOT_HOOK_JSON, "Copilot hook config", ctx)?;
 
-    // 2. Write instructions
+    // 2. Upsert RTK marker block in copilot-instructions.md (preserves user content)
     let instructions_path = github_dir.join("copilot-instructions.md");
-    write_if_changed(
-        &instructions_path,
-        COPILOT_INSTRUCTIONS,
-        "Copilot instructions",
-        ctx,
-    )?;
+    upsert_copilot_instructions(&instructions_path, ctx)?;
 
     if dry_run {
         print_dry_run_footer();
