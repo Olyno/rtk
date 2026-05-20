@@ -1482,72 +1482,22 @@ fn run_claude_md_mode(global: bool, install_opencode: bool, ctx: InitContext) ->
         eprintln!("Writing rtk instructions to: {}", path.display());
     }
 
-    if path.exists() {
-        let existing = fs::read_to_string(&path)?;
-        // upsert_rtk_block handles all 4 cases: add, update, unchanged, malformed
-        let (new_content, action) = upsert_rtk_block(&existing, RTK_INSTRUCTIONS);
-
-        match action {
-            RtkBlockUpsert::Added => {
-                if dry_run {
-                    println!("[dry-run] would add rtk instructions to {}", path.display());
-                } else {
-                    fs::write(&path, new_content)?;
-                    println!("[ok] Added rtk instructions to existing {}", path.display());
-                }
-            }
-            RtkBlockUpsert::Updated => {
-                if dry_run {
-                    println!(
-                        "[dry-run] would update rtk instructions in {}",
-                        path.display()
-                    );
-                } else {
-                    fs::write(&path, new_content)?;
-                    println!("[ok] Updated rtk instructions in {}", path.display());
-                }
-            }
-            RtkBlockUpsert::Unchanged => {
-                if !dry_run {
-                    println!(
-                        "[ok] {} already contains up-to-date rtk instructions",
-                        path.display()
-                    );
-                }
-                return Ok(());
-            }
-            RtkBlockUpsert::Malformed => {
-                eprintln!(
-                    "[warn] Warning: Found '{}' without closing marker in {}",
-                    RTK_BLOCK_START,
-                    path.display()
-                );
-
-                if let Some((line_num, _)) = existing
-                    .lines()
-                    .enumerate()
-                    .find(|(_, line)| line.contains(RTK_BLOCK_START))
-                {
-                    eprintln!("    Location: line {}", line_num + 1);
-                }
-
-                eprintln!("    Action: Manually remove the incomplete block, then re-run:");
-                if global {
-                    eprintln!("            rtk init -g --claude-md");
-                } else {
-                    eprintln!("            rtk init --claude-md");
-                }
-                return Ok(());
-            }
-        }
-    } else if dry_run {
-        println!(
-            "[dry-run] would create {} with rtk instructions",
-            path.display()
-        );
+    let recovery_cmd = if global {
+        "rtk init -g --claude-md"
     } else {
-        fs::write(&path, RTK_INSTRUCTIONS)?;
-        println!("[ok] Created {} with rtk instructions", path.display());
+        "rtk init --claude-md"
+    };
+
+    let action = write_rtk_block(
+        &path,
+        RTK_INSTRUCTIONS,
+        "rtk instructions",
+        recovery_cmd,
+        ctx,
+    )?;
+
+    if matches!(action, RtkBlockUpsert::Unchanged) {
+        return Ok(());
     }
 
     if global {
@@ -2414,6 +2364,85 @@ fn upsert_rtk_block(content: &str, block: &str) -> (String, RtkBlockUpsert) {
             RtkBlockUpsert::Added,
         )
     }
+}
+
+/// Idempotently write an RTK-owned marker block into `path`, preserving user content.
+///
+/// Reads the file (if any), passes it through [`upsert_rtk_block`], and writes the
+/// result back via [`atomic_write`]. Refuses to modify files containing an opening
+/// marker without a matching closing marker (bails with a diagnostic and the exact
+/// `recovery_cmd` to re-run after manual cleanup).
+///
+/// Returns the [`RtkBlockUpsert`] action so callers can branch on whether anything
+/// was actually changed (e.g., to skip post-install steps on `Unchanged`).
+///
+/// `label` is shown in user-facing messages (e.g., `"rtk instructions"`,
+/// `"Copilot instructions"`).
+fn write_rtk_block(
+    path: &Path,
+    block: &str,
+    label: &str,
+    recovery_cmd: &str,
+    ctx: InitContext,
+) -> Result<RtkBlockUpsert> {
+    let InitContext { dry_run, .. } = ctx;
+
+    let existing = if path.exists() {
+        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?
+    } else {
+        String::new()
+    };
+
+    let (new_content, action) = upsert_rtk_block(&existing, block);
+
+    match action {
+        RtkBlockUpsert::Added => {
+            if dry_run {
+                println!("[dry-run] would add {} to {}", label, path.display());
+            } else {
+                atomic_write(path, &new_content)
+                    .with_context(|| format!("Failed to write {}", path.display()))?;
+                println!("[ok] Added {} to {}", label, path.display());
+            }
+        }
+        RtkBlockUpsert::Updated => {
+            if dry_run {
+                println!("[dry-run] would update {} in {}", label, path.display());
+            } else {
+                atomic_write(path, &new_content)
+                    .with_context(|| format!("Failed to write {}", path.display()))?;
+                println!("[ok] Updated {} in {}", label, path.display());
+            }
+        }
+        RtkBlockUpsert::Unchanged => {
+            if !dry_run {
+                println!("[ok] {} already up to date in {}", label, path.display());
+            }
+        }
+        RtkBlockUpsert::Malformed => {
+            eprintln!(
+                "[warn] Found '{}' without closing marker in {}",
+                RTK_BLOCK_START,
+                path.display()
+            );
+            if let Some((line_num, _)) = existing
+                .lines()
+                .enumerate()
+                .find(|(_, line)| line.contains(RTK_BLOCK_START))
+            {
+                eprintln!("    Location: line {}", line_num + 1);
+            }
+            eprintln!("    Action: Manually remove the incomplete block, then re-run:");
+            eprintln!("            {recovery_cmd}");
+            anyhow::bail!(
+                "Refusing to modify malformed {} at {}",
+                label,
+                path.display()
+            );
+        }
+    }
+
+    Ok(action)
 }
 
 /// Patch CLAUDE.md: add @RTK.md, migrate if old block exists
@@ -3711,78 +3740,6 @@ rtk proxy <cmd>       # Run raw (no filtering) but track usage
 <!-- /rtk-instructions -->
 "#;
 
-/// Upsert the RTK marker block in `copilot-instructions.md`.
-///
-/// Preserves user content outside the `<!-- rtk-instructions v2 --> ...
-/// <!-- /rtk-instructions -->` markers; only RTK-owned content between the
-/// markers is added/updated/left untouched depending on prior state.
-/// Refuses to modify malformed files (opening marker without closing).
-fn upsert_copilot_instructions(path: &Path, ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
-
-    let existing = if path.exists() {
-        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?
-    } else {
-        String::new()
-    };
-
-    let (new_content, action) = upsert_rtk_block(&existing, COPILOT_INSTRUCTIONS);
-
-    match action {
-        RtkBlockUpsert::Added => {
-            if dry_run {
-                println!(
-                    "[dry-run] would add Copilot instructions to {}",
-                    path.display()
-                );
-            } else {
-                atomic_write(path, &new_content)
-                    .with_context(|| format!("Failed to write {}", path.display()))?;
-                if verbose > 0 {
-                    eprintln!("Added Copilot instructions to {}", path.display());
-                }
-            }
-        }
-        RtkBlockUpsert::Updated => {
-            if dry_run {
-                println!(
-                    "[dry-run] would update Copilot instructions in {}",
-                    path.display()
-                );
-            } else {
-                atomic_write(path, &new_content)
-                    .with_context(|| format!("Failed to write {}", path.display()))?;
-                if verbose > 0 {
-                    eprintln!("Updated Copilot instructions in {}", path.display());
-                }
-            }
-        }
-        RtkBlockUpsert::Unchanged => {
-            if verbose > 0 {
-                eprintln!(
-                    "Copilot instructions already up to date: {}",
-                    path.display()
-                );
-            }
-        }
-        RtkBlockUpsert::Malformed => {
-            eprintln!(
-                "[warn] Found '{}' without closing marker in {}",
-                RTK_BLOCK_START,
-                path.display()
-            );
-            eprintln!("    Action: Manually remove the incomplete block, then re-run:");
-            eprintln!("            rtk init --copilot");
-            anyhow::bail!(
-                "Refusing to modify malformed copilot-instructions.md at {}",
-                path.display()
-            );
-        }
-    }
-
-    Ok(())
-}
-
 /// Entry point for `rtk init --copilot`.
 ///
 /// Installs in the current working directory's `.github/` subdirectory.
@@ -3804,13 +3761,21 @@ fn run_copilot_at(base: &Path, ctx: InitContext) -> Result<()> {
             .with_context(|| format!("Failed to create {} directory", hooks_dir.display()))?;
     }
 
-    // 1. Write hook config
+    // 1. Upsert RTK marker block in copilot-instructions.md (preserves user content).
+    //    Done BEFORE writing the hook config so a malformed file aborts the install
+    //    without leaving a stale hook on disk.
+    let instructions_path = github_dir.join("copilot-instructions.md");
+    write_rtk_block(
+        &instructions_path,
+        COPILOT_INSTRUCTIONS,
+        "Copilot instructions",
+        "rtk init --copilot",
+        ctx,
+    )?;
+
+    // 2. Write hook config (only reached if the upsert above succeeded).
     let hook_path = hooks_dir.join("rtk-rewrite.json");
     write_if_changed(&hook_path, COPILOT_HOOK_JSON, "Copilot hook config", ctx)?;
-
-    // 2. Upsert RTK marker block in copilot-instructions.md (preserves user content)
-    let instructions_path = github_dir.join("copilot-instructions.md");
-    upsert_copilot_instructions(&instructions_path, ctx)?;
 
     if dry_run {
         print_dry_run_footer();
@@ -5863,5 +5828,58 @@ mod tests {
 
         let after = fs::read_to_string(&instructions_path).unwrap();
         assert_eq!(after, malformed, "File must not be modified when malformed");
+    }
+
+    #[test]
+    fn test_copilot_init_malformed_leaves_no_hook_on_disk() {
+        // Regression: a malformed copilot-instructions.md aborted the install
+        // mid-way, but the hook config had already been written. The upsert
+        // now runs first, so the hook config must not appear when the upsert
+        // bails.
+        let temp = TempDir::new().unwrap();
+        let github_dir = temp.path().join(".github");
+        fs::create_dir_all(&github_dir).unwrap();
+
+        let instructions_path = github_dir.join("copilot-instructions.md");
+        let malformed = format!("# My rules\n\n{}\nincomplete RTK block\n", RTK_BLOCK_START);
+        fs::write(&instructions_path, &malformed).unwrap();
+
+        let hook_path = github_dir.join("hooks").join("rtk-rewrite.json");
+
+        let result = run_copilot_at(temp.path(), InitContext::default());
+
+        assert!(result.is_err(), "Malformed file must cause a hard error");
+        assert!(
+            !hook_path.exists(),
+            "Hook config must not be written when the upsert aborts: {}",
+            hook_path.display()
+        );
+    }
+
+    #[test]
+    fn test_claude_md_mode_refuses_malformed_block() {
+        // Mirrors `test_copilot_init_refuses_malformed_block`: a malformed
+        // CLAUDE.md previously emitted a warning and exited 0, silently
+        // skipping the OpenCode plugin step. The shared `write_rtk_block`
+        // dispatcher now bails for both paths.
+        let tmp = TempDir::new().unwrap();
+        with_claude_dir_override(&tmp, |claude_dir| {
+            let claude_md = claude_dir.join(CLAUDE_MD);
+            let malformed = format!(
+                "# Existing notes\n\n{}\nincomplete RTK block\n",
+                RTK_BLOCK_START
+            );
+            fs::write(&claude_md, &malformed).unwrap();
+
+            let result = run_claude_md_mode(true, false, InitContext::default());
+
+            assert!(
+                result.is_err(),
+                "Malformed CLAUDE.md must cause a hard error, not silent skip"
+            );
+
+            let after = fs::read_to_string(&claude_md).unwrap();
+            assert_eq!(after, malformed, "File must not be modified when malformed");
+        });
     }
 }
