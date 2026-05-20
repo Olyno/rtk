@@ -123,5 +123,9 @@ For truncation recovery on **success** (e.g., list truncated at 20 items), use `
 
 When the truncated output is a **flat list** and the hidden items start at a predictable line, prefer `tee::force_tee_tail_hint(content, slug, offset)`. It writes the same tee file but emits a directly runnable hint — `[see remaining: tail -n +{offset} ~/path]` — so the agent jumps to exactly the first hidden item without scanning the whole file. The offset is `header_lines + MAX_CAP + 1`. Use `force_tee_hint` instead when the output has multiple sections (e.g. running + stopped containers) and no single offset cleanly covers the gap.
 
+### Truncation Caps (`truncate`)
+
+`src/core/truncate.rs` defines four global cap policies — `CAP_ERRORS`, `CAP_WARNINGS`, `CAP_LIST`, `CAP_INVENTORY` — for the data classes RTK filters truncate. Each filter binds the right CAP to a local `const MAX_*` so the cap is one named jump away from the call site. These CAPs are the staging point for filter-level cap configuration (planned, not yet implemented): once the config surface lands, overriding `CAP_LIST` in `~/.config/rtk/config.toml` will tune every list filter in one place instead of editing 20+ files. A filter that genuinely needs to deviate uses a small additive offset (`CAP_WARNINGS - 5`) with a one-line reason, so it still moves with the global; bare literals and `*`/`/` scaling are avoided.
+
 ## Adding New Functionality
 Place new infrastructure code here if it meets **all** of these criteria: (1) it has no dependencies on command modules or hooks, (2) it is used by two or more other modules, and (3) it provides a general-purpose utility rather than command-specific logic. Follow the existing pattern of lazy-initialized resources (`lazy_static!` for regex, on-demand config loading) to preserve the <10ms startup target. Add `#[cfg(test)] mod tests` with unit tests in the same file.
