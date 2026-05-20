@@ -5744,4 +5744,152 @@ mod tests {
             "RTK block end marker missing"
         );
     }
+
+    #[test]
+    fn test_copilot_init_idempotent_repeats() {
+        use std::env;
+
+        let temp = TempDir::new().unwrap();
+        let github_dir = temp.path().join(".github");
+        fs::create_dir_all(&github_dir).unwrap();
+
+        let original_cwd = env::current_dir().unwrap();
+        env::set_current_dir(temp.path()).unwrap();
+        run_copilot(InitContext::default()).unwrap();
+        let after_first = fs::read_to_string(github_dir.join("copilot-instructions.md")).unwrap();
+
+        run_copilot(InitContext::default()).unwrap();
+        let after_second = fs::read_to_string(github_dir.join("copilot-instructions.md")).unwrap();
+        env::set_current_dir(&original_cwd).unwrap();
+
+        assert_eq!(
+            after_first, after_second,
+            "Second init must be a no-op (idempotent)"
+        );
+
+        let count_start = after_first.matches(RTK_BLOCK_START).count();
+        let count_end = after_first.matches(RTK_BLOCK_END).count();
+        assert_eq!(
+            count_start, 1,
+            "RTK_BLOCK_START must appear once, got {count_start}"
+        );
+        assert_eq!(
+            count_end, 1,
+            "RTK_BLOCK_END must appear once, got {count_end}"
+        );
+    }
+
+    #[test]
+    fn test_copilot_init_updates_stale_block() {
+        use std::env;
+
+        let temp = TempDir::new().unwrap();
+        let github_dir = temp.path().join(".github");
+        fs::create_dir_all(&github_dir).unwrap();
+
+        let instructions_path = github_dir.join("copilot-instructions.md");
+        let stale = format!(
+            "# Project rules\n\nUse rg.\n\n{}\n# OLD RTK CONTENT\nrtk foo\n{}\n",
+            RTK_BLOCK_START, RTK_BLOCK_END
+        );
+        fs::write(&instructions_path, &stale).unwrap();
+
+        let original_cwd = env::current_dir().unwrap();
+        env::set_current_dir(temp.path()).unwrap();
+        run_copilot(InitContext::default()).unwrap();
+        env::set_current_dir(&original_cwd).unwrap();
+
+        let updated = fs::read_to_string(&instructions_path).unwrap();
+
+        assert!(
+            updated.contains("Use rg."),
+            "User content outside the block must be preserved"
+        );
+        assert!(
+            !updated.contains("# OLD RTK CONTENT"),
+            "Stale RTK block content must be removed"
+        );
+        assert!(
+            updated.contains("rtk cargo test"),
+            "Fresh COPILOT_INSTRUCTIONS content must be present"
+        );
+    }
+
+    #[test]
+    fn test_copilot_init_dry_run_no_write() {
+        use std::env;
+
+        let temp = TempDir::new().unwrap();
+        let github_dir = temp.path().join(".github");
+        fs::create_dir_all(&github_dir).unwrap();
+
+        let instructions_path = github_dir.join("copilot-instructions.md");
+        assert!(!instructions_path.exists());
+
+        let original_cwd = env::current_dir().unwrap();
+        env::set_current_dir(temp.path()).unwrap();
+        let ctx = InitContext {
+            dry_run: true,
+            ..InitContext::default()
+        };
+        run_copilot(ctx).unwrap();
+        env::set_current_dir(&original_cwd).unwrap();
+
+        assert!(
+            !instructions_path.exists(),
+            "Dry-run must not create copilot-instructions.md"
+        );
+    }
+
+    #[test]
+    fn test_copilot_init_fresh_install_creates_file() {
+        use std::env;
+
+        let temp = TempDir::new().unwrap();
+        let instructions_path = temp
+            .path()
+            .join(".github")
+            .join("copilot-instructions.md");
+        assert!(!instructions_path.exists());
+
+        let original_cwd = env::current_dir().unwrap();
+        env::set_current_dir(temp.path()).unwrap();
+        run_copilot(InitContext::default()).unwrap();
+        env::set_current_dir(&original_cwd).unwrap();
+
+        assert!(
+            instructions_path.exists(),
+            "Fresh install must create copilot-instructions.md"
+        );
+        let content = fs::read_to_string(&instructions_path).unwrap();
+        assert!(content.contains(RTK_BLOCK_START));
+        assert!(content.contains(RTK_BLOCK_END));
+        assert!(content.contains("rtk cargo test"));
+    }
+
+    #[test]
+    fn test_copilot_init_refuses_malformed_block() {
+        use std::env;
+
+        let temp = TempDir::new().unwrap();
+        let github_dir = temp.path().join(".github");
+        fs::create_dir_all(&github_dir).unwrap();
+
+        let instructions_path = github_dir.join("copilot-instructions.md");
+        let malformed = format!("# My rules\n\n{}\nincomplete RTK block\n", RTK_BLOCK_START);
+        fs::write(&instructions_path, &malformed).unwrap();
+
+        let original_cwd = env::current_dir().unwrap();
+        env::set_current_dir(temp.path()).unwrap();
+        let result = run_copilot(InitContext::default());
+        env::set_current_dir(&original_cwd).unwrap();
+
+        assert!(
+            result.is_err(),
+            "Malformed file must cause an error, not silent rewrite"
+        );
+
+        let after = fs::read_to_string(&instructions_path).unwrap();
+        assert_eq!(after, malformed, "File must not be modified when malformed");
+    }
 }
