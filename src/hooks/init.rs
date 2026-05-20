@@ -3721,8 +3721,7 @@ fn upsert_copilot_instructions(path: &Path, ctx: InitContext) -> Result<()> {
     let InitContext { verbose, dry_run } = ctx;
 
     let existing = if path.exists() {
-        fs::read_to_string(path)
-            .with_context(|| format!("Failed to read {}", path.display()))?
+        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?
     } else {
         String::new()
     };
@@ -3784,15 +3783,25 @@ fn upsert_copilot_instructions(path: &Path, ctx: InitContext) -> Result<()> {
     Ok(())
 }
 
-/// Entry point for `rtk init --copilot`
+/// Entry point for `rtk init --copilot`.
+///
+/// Installs in the current working directory's `.github/` subdirectory.
 pub fn run_copilot(ctx: InitContext) -> Result<()> {
+    run_copilot_at(Path::new("."), ctx)
+}
+
+/// Same as [`run_copilot`] but operates relative to an explicit base path.
+///
+/// Used by tests to avoid mutating process-global `cwd` (which is racy under
+/// `cargo test`'s default parallel execution).
+fn run_copilot_at(base: &Path, ctx: InitContext) -> Result<()> {
     let InitContext { dry_run, .. } = ctx;
-    // Install in current project's .github/ directory
-    let github_dir = Path::new(".github");
+    let github_dir = base.join(".github");
     let hooks_dir = github_dir.join("hooks");
 
     if !dry_run {
-        fs::create_dir_all(&hooks_dir).context("Failed to create .github/hooks/ directory")?;
+        fs::create_dir_all(&hooks_dir)
+            .with_context(|| format!("Failed to create {} directory", hooks_dir.display()))?;
     }
 
     // 1. Write hook config
@@ -5707,8 +5716,6 @@ mod tests {
 
     #[test]
     fn test_copilot_init_preserves_existing_instructions() {
-        use std::env;
-
         let temp = TempDir::new().unwrap();
         let github_dir = temp.path().join(".github");
         fs::create_dir_all(&github_dir).unwrap();
@@ -5719,11 +5726,7 @@ mod tests {
             Never suggest npm; prefer pnpm.\n";
         fs::write(&instructions_path, user_content).unwrap();
 
-        let original_cwd = env::current_dir().unwrap();
-        env::set_current_dir(temp.path()).unwrap();
-        let result = run_copilot(InitContext::default());
-        env::set_current_dir(&original_cwd).unwrap();
-        result.unwrap();
+        run_copilot_at(temp.path(), InitContext::default()).unwrap();
 
         let final_content = fs::read_to_string(&instructions_path).unwrap();
 
@@ -5747,20 +5750,15 @@ mod tests {
 
     #[test]
     fn test_copilot_init_idempotent_repeats() {
-        use std::env;
-
         let temp = TempDir::new().unwrap();
         let github_dir = temp.path().join(".github");
         fs::create_dir_all(&github_dir).unwrap();
 
-        let original_cwd = env::current_dir().unwrap();
-        env::set_current_dir(temp.path()).unwrap();
-        run_copilot(InitContext::default()).unwrap();
+        run_copilot_at(temp.path(), InitContext::default()).unwrap();
         let after_first = fs::read_to_string(github_dir.join("copilot-instructions.md")).unwrap();
 
-        run_copilot(InitContext::default()).unwrap();
+        run_copilot_at(temp.path(), InitContext::default()).unwrap();
         let after_second = fs::read_to_string(github_dir.join("copilot-instructions.md")).unwrap();
-        env::set_current_dir(&original_cwd).unwrap();
 
         assert_eq!(
             after_first, after_second,
@@ -5781,8 +5779,6 @@ mod tests {
 
     #[test]
     fn test_copilot_init_updates_stale_block() {
-        use std::env;
-
         let temp = TempDir::new().unwrap();
         let github_dir = temp.path().join(".github");
         fs::create_dir_all(&github_dir).unwrap();
@@ -5794,10 +5790,7 @@ mod tests {
         );
         fs::write(&instructions_path, &stale).unwrap();
 
-        let original_cwd = env::current_dir().unwrap();
-        env::set_current_dir(temp.path()).unwrap();
-        run_copilot(InitContext::default()).unwrap();
-        env::set_current_dir(&original_cwd).unwrap();
+        run_copilot_at(temp.path(), InitContext::default()).unwrap();
 
         let updated = fs::read_to_string(&instructions_path).unwrap();
 
@@ -5817,23 +5810,15 @@ mod tests {
 
     #[test]
     fn test_copilot_init_dry_run_no_write() {
-        use std::env;
-
         let temp = TempDir::new().unwrap();
-        let github_dir = temp.path().join(".github");
-        fs::create_dir_all(&github_dir).unwrap();
-
-        let instructions_path = github_dir.join("copilot-instructions.md");
+        let instructions_path = temp.path().join(".github").join("copilot-instructions.md");
         assert!(!instructions_path.exists());
 
-        let original_cwd = env::current_dir().unwrap();
-        env::set_current_dir(temp.path()).unwrap();
         let ctx = InitContext {
             dry_run: true,
             ..InitContext::default()
         };
-        run_copilot(ctx).unwrap();
-        env::set_current_dir(&original_cwd).unwrap();
+        run_copilot_at(temp.path(), ctx).unwrap();
 
         assert!(
             !instructions_path.exists(),
@@ -5843,19 +5828,11 @@ mod tests {
 
     #[test]
     fn test_copilot_init_fresh_install_creates_file() {
-        use std::env;
-
         let temp = TempDir::new().unwrap();
-        let instructions_path = temp
-            .path()
-            .join(".github")
-            .join("copilot-instructions.md");
+        let instructions_path = temp.path().join(".github").join("copilot-instructions.md");
         assert!(!instructions_path.exists());
 
-        let original_cwd = env::current_dir().unwrap();
-        env::set_current_dir(temp.path()).unwrap();
-        run_copilot(InitContext::default()).unwrap();
-        env::set_current_dir(&original_cwd).unwrap();
+        run_copilot_at(temp.path(), InitContext::default()).unwrap();
 
         assert!(
             instructions_path.exists(),
@@ -5869,8 +5846,6 @@ mod tests {
 
     #[test]
     fn test_copilot_init_refuses_malformed_block() {
-        use std::env;
-
         let temp = TempDir::new().unwrap();
         let github_dir = temp.path().join(".github");
         fs::create_dir_all(&github_dir).unwrap();
@@ -5879,10 +5854,7 @@ mod tests {
         let malformed = format!("# My rules\n\n{}\nincomplete RTK block\n", RTK_BLOCK_START);
         fs::write(&instructions_path, &malformed).unwrap();
 
-        let original_cwd = env::current_dir().unwrap();
-        env::set_current_dir(temp.path()).unwrap();
-        let result = run_copilot(InitContext::default());
-        env::set_current_dir(&original_cwd).unwrap();
+        let result = run_copilot_at(temp.path(), InitContext::default());
 
         assert!(
             result.is_err(),
