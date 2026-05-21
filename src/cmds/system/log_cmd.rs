@@ -1,7 +1,7 @@
 //! Deduplicates repeated log lines and shows counts instead.
 
 use crate::core::tracking;
-use crate::core::truncate::CAP_WARNINGS;
+use crate::core::truncate::{reduced, CAP_WARNINGS};
 use anyhow::Result;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -180,7 +180,7 @@ fn analyze_logs(content: &str) -> String {
         warn_list.sort_by(|a, b| b.1.cmp(a.1));
 
         // warnings are lower severity than errors — show fewer.
-        const MAX_LOG_WARNS: usize = CAP_WARNINGS - 5;
+        const MAX_LOG_WARNS: usize = reduced(CAP_WARNINGS, 5);
         for (normalized, count) in warn_list.iter().take(MAX_LOG_WARNS) {
             let original = unique_warnings
                 .iter()

@@ -1,7 +1,7 @@
 //! Summarizes project dependencies from lock files and manifests.
 
 use crate::core::tracking;
-use crate::core::truncate::CAP_WARNINGS;
+use crate::core::truncate::{reduced, CAP_WARNINGS};
 use anyhow::Result;
 use regex::Regex;
 use std::fs;
@@ -9,7 +9,7 @@ use std::path::Path;
 
 const MAX_DEPS: usize = CAP_WARNINGS;
 // dev deps are secondary to prod — show fewer.
-const MAX_DEV_DEPS: usize = CAP_WARNINGS - 5;
+const MAX_DEV_DEPS: usize = reduced(CAP_WARNINGS, 5);
 
 /// Summarize project dependencies
 pub fn run(path: &Path, verbose: u8) -> Result<()> {

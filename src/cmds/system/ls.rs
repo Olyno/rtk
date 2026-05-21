@@ -2,7 +2,7 @@
 
 use super::constants::NOISE_DIRS;
 use crate::core::runner::{self, RunOptions};
-use crate::core::truncate::CAP_WARNINGS;
+use crate::core::truncate::{reduced, CAP_WARNINGS};
 use crate::core::utils::resolved_command;
 use anyhow::Result;
 use lazy_static::lazy_static;
@@ -254,7 +254,7 @@ fn compact_ls(raw: &str, show_all: bool) -> (String, String, usize) {
     let mut summary = format!("\nSummary: {} files, {} dirs", files.len(), dirs.len());
     if !by_ext.is_empty() {
         // inline single-line summary — fewer entries to avoid wrapping.
-        const MAX_EXT_SUMMARY: usize = CAP_WARNINGS - 5;
+        const MAX_EXT_SUMMARY: usize = reduced(CAP_WARNINGS, 5);
         let mut ext_counts: Vec<_> = by_ext.iter().collect();
         ext_counts.sort_by(|a, b| b.1.cmp(a.1));
         let ext_parts: Vec<String> = ext_counts

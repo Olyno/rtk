@@ -6,7 +6,7 @@
 //! fails to parse.
 
 use crate::core::runner;
-use crate::core::truncate::CAP_WARNINGS;
+use crate::core::truncate::{reduced, CAP_WARNINGS};
 use crate::core::utils::{fallback_tail, ruby_exec, truncate};
 use anyhow::Result;
 use lazy_static::lazy_static;
@@ -14,7 +14,7 @@ use regex::Regex;
 use serde::Deserialize;
 
 // rspec failures carry full backtraces — show fewer than a generic warning list.
-const MAX_RSPEC_FAILURES: usize = CAP_WARNINGS - 5;
+const MAX_RSPEC_FAILURES: usize = reduced(CAP_WARNINGS, 5);
 
 // ── Noise-stripping regex patterns ──────────────────────────────────────────
 
