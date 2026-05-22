@@ -15,7 +15,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent"
 
 const REWRITE_TIMEOUT_MS = 2_000
-const MAX_REWRITE_OUTPUT_BYTES = 1024 * 1024
 const MIN_SUPPORTED_RTK_MINOR = 23
 
 // Parse "X.Y.Z" semver, return [major, minor, patch] or null.
@@ -34,7 +33,6 @@ async function rewriteCommand(
   const result = await pi.exec("rtk", ["rewrite", cmd], {
     timeout: REWRITE_TIMEOUT_MS,
     signal,
-    maxBuffer: MAX_REWRITE_OUTPUT_BYTES,
   })
   if (result.killed) return null
   if (result.code !== 0 && result.code !== 3) return null
