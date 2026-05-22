@@ -1,4 +1,3 @@
-// rtk-hook-version: 2
 // RTK Pi extension — rewrites bash commands to use rtk for token savings.
 // Requires: rtk >= 0.23.0 in PATH.
 //
