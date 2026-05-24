@@ -4,7 +4,7 @@
 
 **Deployed hook artifacts** — the actual files installed on user machines by `rtk init`. These are shell scripts, TypeScript plugins, and rules files that run outside the Rust binary. They are **thin delegates**: parse agent-specific JSON, call `rtk rewrite` as a subprocess, format agent-specific response. Zero filtering logic lives here.
 
-Owns: per-agent hook scripts and configuration files for 8 supported agents (Claude Code, Copilot, Cursor, Cline, Windsurf, Codex, OpenCode, Hermes).
+Owns: per-agent hook scripts and configuration files for 10 supported agents (Claude Code, Copilot, Cursor, Cline, Windsurf, Codex, OpenCode, Hermes, Kimi CLI, Kilocode, Antigravity).
 
 Does **not** own: hook installation/uninstallation (that's `src/hooks/init.rs`), the rewrite pattern registry (that's `discover/registry`), or integrity verification (that's `src/hooks/integrity.rs`).
 
@@ -41,6 +41,9 @@ Each agent subdirectory has its own README with hook-specific details:
 - **[`codex/`](codex/README.md)** — Awareness document, `AGENTS.md` integration, `$CODEX_HOME` or `~/.codex/` location
 - **[`opencode/`](opencode/README.md)** — TypeScript plugin, `zx` library, `tool.execute.before` event, in-place mutation
 - **[`hermes/`](hermes/README.md)** — Python plugin, `pre_tool_call` hook, in-place terminal command mutation
+- **[`kimi/`](kimi/README.md)** — Shell hook, `PreToolUse` JSON format, `~/.kimi/config.toml` integration
+- **[`kilocode/`](kilocode/README.md)** — Rules file (prompt-level), `.kilocoderules` project-local installation
+- **[`antigravity/`](antigravity/README.md)** — Rules file (prompt-level), `.antigravityrules` project-local installation
 
 ## Supported Agents
 
@@ -51,11 +54,14 @@ Each agent subdirectory has its own README with hook-specific details:
 | GitHub Copilot CLI | Rust binary (`rtk hook copilot`) | Deny-with-suggestion | No (agent retries) |
 | Cursor | Shell hook (`preToolUse`) | Transparent rewrite | Yes (`updated_input`) |
 | Gemini CLI | Rust binary (`rtk hook gemini`) | Transparent rewrite | Yes (`hookSpecificOutput`) |
+| Kimi CLI | Shell hook (`PreToolUse`) | Transparent rewrite | Yes (`hookSpecificOutput`) |
 | Cline / Roo Code | Custom instructions (rules file) | Prompt-level guidance | N/A |
 | Windsurf | Custom instructions (rules file) | Prompt-level guidance | N/A |
 | Codex CLI | AGENTS.md / instructions | Prompt-level guidance | N/A |
 | OpenCode | TypeScript plugin (`tool.execute.before`) | In-place mutation | Yes |
 | Hermes | Python plugin (`pre_tool_call`) | In-place mutation | Yes |
+| Kilocode | Custom instructions (rules file) | Prompt-level guidance | N/A |
+| Antigravity | Custom instructions (rules file) | Prompt-level guidance | N/A |
 
 ## JSON Formats by Agent
 
@@ -146,6 +152,32 @@ Returns `{}` when no rewrite (Cursor requires JSON for all paths).
 ```
 
 **No rewrite**: `{"decision": "allow"}`
+
+### Kimi CLI (Shell Hook)
+
+**Input** (stdin):
+```json
+{
+  "session_id": "abc123",
+  "cwd": "/path/to/project",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Shell",
+  "tool_input": { "command": "git status" },
+  "tool_call_id": "call_123"
+}
+```
+
+**Output** (stdout, when rewritten):
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "permissionDecisionReason": "RTK auto-rewrite",
+    "updatedInput": { "command": "rtk git status" }
+  }
+}
+```
 
 ### OpenCode (TypeScript Plugin)
 

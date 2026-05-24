@@ -14,8 +14,8 @@ use crate::hooks::constants::{
 use super::constants::{
     BEFORE_TOOL_KEY, CLAUDE_DIR, CLAUDE_HOOK_COMMAND, CODEX_DIR, CURSOR_HOOK_COMMAND,
     GEMINI_HOOK_FILE, HERMES_DIR, HERMES_PLUGINS_SUBDIR, HERMES_PLUGIN_INIT_FILE,
-    HERMES_PLUGIN_MANIFEST_FILE, HERMES_PLUGIN_NAME, HOOKS_JSON, HOOKS_SUBDIR, PRE_TOOL_USE_KEY,
-    REWRITE_HOOK_FILE, SETTINGS_JSON,
+    HERMES_PLUGIN_MANIFEST_FILE, HERMES_PLUGIN_NAME, HOOKS_JSON, HOOKS_SUBDIR, KIMI_CONFIG_FILE,
+    KIMI_DIR, PRE_TOOL_USE_KEY, REWRITE_HOOK_FILE, SETTINGS_JSON,
 };
 use super::integrity;
 
@@ -25,6 +25,9 @@ const OPENCODE_PLUGIN: &str = include_str!("../../hooks/opencode/rtk.ts");
 // Embedded slim RTK awareness instructions
 const RTK_SLIM: &str = include_str!("../../hooks/claude/rtk-awareness.md");
 const RTK_SLIM_CODEX: &str = include_str!("../../hooks/codex/rtk-awareness.md");
+
+// Embedded Kimi CLI hook script
+const KIMI_HOOK_SCRIPT: &str = include_str!("../../hooks/kimi/rtk-rewrite.sh");
 
 /// Template written by `rtk init` when no filters.toml exists yet.
 const FILTERS_TEMPLATE: &str = r#"# Project-local RTK filters — commit this file with your repo.
@@ -250,6 +253,7 @@ pub fn run(
     install_cursor: bool,
     install_windsurf: bool,
     install_cline: bool,
+    install_kimi: bool,
     claude_md: bool,
     hook_only: bool,
     codex: bool,
@@ -316,6 +320,11 @@ pub fn run(
             // Cursor hooks (additive, installed alongside Claude Code)
             if install_cursor {
                 install_cursor_hooks(ctx)?;
+            }
+
+            // Kimi hooks (additive, installed alongside Claude Code)
+            if install_kimi {
+                install_kimi_hooks(ctx)?;
             }
         }
     }
@@ -606,11 +615,32 @@ pub fn uninstall(
     gemini: bool,
     codex: bool,
     cursor: bool,
+    kimi: bool,
     ctx: InitContext,
 ) -> Result<()> {
     let InitContext { verbose, dry_run } = ctx;
     if codex {
         uninstall_codex(global, ctx)?;
+        if dry_run {
+            print_dry_run_footer();
+        }
+        return Ok(());
+    }
+
+    if kimi {
+        if !global {
+            anyhow::bail!("Kimi uninstall only works with --global flag");
+        }
+        uninstall_kimi(ctx)?;
+        let header = if dry_run {
+            "[dry-run] would uninstall RTK (Kimi)"
+        } else {
+            "RTK uninstalled (Kimi)"
+        };
+        println!("{}", header);
+        if !dry_run {
+            println!("\nRestart Kimi CLI to apply changes.");
+        }
         if dry_run {
             print_dry_run_footer();
         }
@@ -3791,6 +3821,257 @@ fn run_copilot_at(base: &Path, ctx: InitContext) -> Result<()> {
     Ok(())
 }
 
+/// Resolve Kimi CLI config directory: ~/.kimi
+fn resolve_kimi_dir() -> Result<PathBuf> {
+    resolve_home_subdir(KIMI_DIR)
+}
+
+/// Entry point for `rtk init --agent kimi`.
+pub fn run_kimi_mode(ctx: InitContext) -> Result<()> {
+    install_kimi_hooks(ctx)?;
+    if !ctx.dry_run {
+        println!("\nKimi CLI integration installed.\n");
+        println!("  Hook script:    ~/.kimi/hooks/rtk-rewrite.sh");
+        println!("  Config file:    ~/.kimi/config.toml");
+        println!("\n  Restart Kimi CLI or start a new session to activate.\n");
+    }
+    Ok(())
+}
+
+/// Parse Kimi config.toml, with a fallback that strips `hooks = []` if it
+/// conflicts with `[[hooks]]` array-of-tables syntax.
+fn parse_kimi_config(raw: &str, path: &std::path::Path) -> Result<toml::Table> {
+    match toml::from_str::<toml::Table>(raw) {
+        Ok(doc) => Ok(doc),
+        Err(e) => {
+            // Common issue: `hooks = []` mixed with `[[hooks]]` makes TOML invalid.
+            let cleaned = raw
+                .lines()
+                .filter(|line| line.trim() != "hooks = []")
+                .collect::<Vec<_>>()
+                .join("\n");
+            toml::from_str::<toml::Table>(&cleaned).with_context(|| {
+                format!(
+                    "Failed to parse Kimi config: {}. Original error: {}",
+                    path.display(),
+                    e
+                )
+            })
+        }
+    }
+}
+
+/// Build the TOML table representing the RTK hook.
+fn build_kimi_hook_table(command: &str) -> toml::Value {
+    let mut table = toml::Table::new();
+    table.insert(
+        "event".to_string(),
+        toml::Value::String("PreToolUse".to_string()),
+    );
+    table.insert(
+        "matcher".to_string(),
+        toml::Value::String("Shell".to_string()),
+    );
+    table.insert("command".to_string(), toml::Value::String(command.to_string()));
+    table.insert("timeout".to_string(), toml::Value::Integer(10));
+    toml::Value::Table(table)
+}
+
+/// Install Kimi CLI hooks: write hook script and register in config.toml.
+fn install_kimi_hooks(ctx: InitContext) -> Result<()> {
+    let InitContext { verbose, dry_run } = ctx;
+    let kimi_dir = resolve_kimi_dir()?;
+    let hooks_dir = kimi_dir.join("hooks");
+    let hook_script_path = hooks_dir.join(REWRITE_HOOK_FILE);
+    let config_path = kimi_dir.join(KIMI_CONFIG_FILE);
+
+    // 1. Write hook script
+    if !dry_run {
+        fs::create_dir_all(&hooks_dir).with_context(|| {
+            format!(
+                "Failed to create Kimi hooks directory: {}",
+                hooks_dir.display()
+            )
+        })?;
+    }
+    write_if_changed(&hook_script_path, KIMI_HOOK_SCRIPT, "Kimi hook script", ctx)?;
+
+    // 2. Register hook in config.toml via TOML parser
+    let command_str = hook_script_path.display().to_string();
+    let hook_value = build_kimi_hook_table(&command_str);
+
+    if config_path.exists() {
+        let raw = fs::read_to_string(&config_path).with_context(|| {
+            format!(
+                "Failed to read Kimi config: {}",
+                config_path.display()
+            )
+        })?;
+        let mut doc = parse_kimi_config(&raw, &config_path)?;
+
+        let hooks = doc
+            .entry("hooks")
+            .or_insert_with(|| toml::Value::Array(Vec::new()));
+        let hooks_arr = hooks
+            .as_array_mut()
+            .context("hooks must be an array of tables")?;
+
+        // Find existing RTK hook by command path
+        let existing_idx = hooks_arr.iter().position(|h| {
+            h.get("command")
+                .and_then(|c| c.as_str())
+                .map(|s| s.contains("rtk-rewrite.sh"))
+                .unwrap_or(false)
+        });
+
+        if let Some(idx) = existing_idx {
+            hooks_arr[idx] = hook_value;
+        } else {
+            hooks_arr.push(hook_value);
+        }
+
+        let new_content = toml::to_string_pretty(&doc)?;
+        if new_content.trim() != raw.trim() {
+            if dry_run {
+                println!("[dry-run] Would update {}", config_path.display());
+                if verbose >= 2 {
+                    println!("--- new content ---\n{}\n---", new_content);
+                }
+            } else {
+                let mut tmp = NamedTempFile::new_in(&kimi_dir)?;
+                tmp.write_all(new_content.as_bytes())?;
+                let tmp_path = tmp.into_temp_path();
+                fs::rename(&tmp_path, &config_path).with_context(|| {
+                    format!(
+                        "Failed to write Kimi config: {}",
+                        config_path.display()
+                    )
+                })?;
+                println!("  Updated {}", config_path.display());
+            }
+        } else if verbose >= 1 {
+            println!("  {} is up to date", config_path.display());
+        }
+    } else {
+        // Create new config.toml
+        let mut doc = toml::Table::new();
+        doc.insert("hooks".to_string(), toml::Value::Array(vec![hook_value]));
+        let new_content = toml::to_string_pretty(&doc)?;
+        if dry_run {
+            println!("[dry-run] Would create {}", config_path.display());
+            if verbose >= 2 {
+                println!("--- content ---\n{}\n---", new_content);
+            }
+        } else {
+            let mut tmp = NamedTempFile::new_in(&kimi_dir)?;
+            tmp.write_all(new_content.as_bytes())?;
+            let tmp_path = tmp.into_temp_path();
+            fs::rename(&tmp_path, &config_path).with_context(|| {
+                format!(
+                    "Failed to create Kimi config: {}",
+                    config_path.display()
+                )
+            })?;
+            println!("  Created {}", config_path.display());
+        }
+    }
+
+    Ok(())
+}
+
+/// Uninstall Kimi CLI hooks: remove hook script and deregister from config.toml.
+pub fn uninstall_kimi(ctx: InitContext) -> Result<()> {
+    let InitContext { verbose, dry_run } = ctx;
+    let kimi_dir = resolve_kimi_dir()?;
+    let hooks_dir = kimi_dir.join("hooks");
+    let hook_script_path = hooks_dir.join(REWRITE_HOOK_FILE);
+    let config_path = kimi_dir.join(KIMI_CONFIG_FILE);
+
+    // 1. Remove hook script
+    if hook_script_path.exists() {
+        if dry_run {
+            println!("  [dry-run] would remove {}", hook_script_path.display());
+        } else {
+            fs::remove_file(&hook_script_path).with_context(|| {
+                format!(
+                    "Failed to remove Kimi hook script: {}",
+                    hook_script_path.display()
+                )
+            })?;
+            if verbose >= 1 {
+                println!("  Removed {}", hook_script_path.display());
+            }
+        }
+    }
+
+    // 2. Remove RTK hook from config.toml via TOML parser
+    if config_path.exists() {
+        let raw = fs::read_to_string(&config_path).with_context(|| {
+            format!(
+                "Failed to read Kimi config: {}",
+                config_path.display()
+            )
+        })?;
+        let mut doc = parse_kimi_config(&raw, &config_path)?;
+
+        let (modified, should_remove) =
+            if let Some(toml::Value::Array(hooks_arr)) = doc.get_mut("hooks") {
+                let original_len = hooks_arr.len();
+                hooks_arr.retain(|h| {
+                    !h.get("command")
+                        .and_then(|c| c.as_str())
+                        .map(|s| s.contains("rtk-rewrite.sh"))
+                        .unwrap_or(false)
+                });
+                let removed = hooks_arr.len() != original_len;
+                let empty = hooks_arr.is_empty();
+                (removed, empty)
+            } else {
+                (false, false)
+            };
+
+        if should_remove {
+            doc.remove("hooks");
+        }
+
+        if modified || should_remove {
+            let new_content = toml::to_string_pretty(&doc)?;
+            if dry_run {
+                println!("  [dry-run] would update {}", config_path.display());
+            } else {
+                let mut tmp = NamedTempFile::new_in(&kimi_dir)?;
+                tmp.write_all(new_content.as_bytes())?;
+                let tmp_path = tmp.into_temp_path();
+                fs::rename(&tmp_path, &config_path).with_context(|| {
+                    format!(
+                        "Failed to write Kimi config: {}",
+                        config_path.display()
+                    )
+                })?;
+                if verbose >= 1 {
+                    println!("  Updated {}", config_path.display());
+                }
+            }
+        }
+    }
+
+    // 3. Clean up empty hooks directory
+    if hooks_dir.exists() {
+        let is_empty = fs::read_dir(&hooks_dir)
+            .map(|mut d| d.next().is_none())
+            .unwrap_or(false);
+        if is_empty {
+            if dry_run {
+                println!("  [dry-run] would remove {}", hooks_dir.display());
+            } else {
+                fs::remove_dir(&hooks_dir).ok();
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3997,6 +4278,7 @@ mod tests {
             false,
             false,
             false,
+            false,
             true,
             PatchMode::Auto,
             InitContext::default(),
@@ -4011,6 +4293,7 @@ mod tests {
     #[test]
     fn test_codex_mode_rejects_no_patch() {
         let err = run(
+            false,
             false,
             false,
             false,
@@ -5438,7 +5721,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         with_claude_dir_override(&tmp, |claude_dir| {
             run_default_mode(true, PatchMode::Auto, false, InitContext::default()).unwrap();
-            uninstall(true, false, false, false, InitContext::default()).unwrap();
+            uninstall(true, false, false, false, false, InitContext::default()).unwrap();
 
             assert!(!claude_dir.join(RTK_MD).exists(), "RTK.md must be removed");
             let settings_content =
@@ -5565,7 +5848,7 @@ mod tests {
                 dry_run: true,
                 ..Default::default()
             };
-            uninstall(true, false, false, false, dry).unwrap();
+            uninstall(true, false, false, false, false, dry).unwrap();
 
             // Files must still exist with identical content
             assert!(

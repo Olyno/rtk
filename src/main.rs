@@ -49,6 +49,8 @@ pub enum AgentTarget {
     Antigravity,
     /// Hermes CLI
     Hermes,
+    /// Kimi CLI
+    Kimi,
 }
 
 #[derive(Parser)]
@@ -1563,24 +1565,29 @@ fn main() {
     std::process::exit(code);
 }
 
-fn uninstall_init_dispatch<UninstallHermes, UninstallStandard>(
+fn uninstall_init_dispatch<UninstallHermes, UninstallKimi, UninstallStandard>(
     agent: Option<AgentTarget>,
     global: bool,
     gemini: bool,
     codex: bool,
     ctx: hooks::init::InitContext,
     uninstall_hermes: UninstallHermes,
+    uninstall_kimi: UninstallKimi,
     uninstall_standard: UninstallStandard,
 ) -> Result<()>
 where
     UninstallHermes: FnOnce(hooks::init::InitContext) -> Result<()>,
-    UninstallStandard: FnOnce(bool, bool, bool, bool, hooks::init::InitContext) -> Result<()>,
+    UninstallKimi: FnOnce(hooks::init::InitContext) -> Result<()>,
+    UninstallStandard: FnOnce(bool, bool, bool, bool, bool, hooks::init::InitContext) -> Result<()>,
 {
     if agent == Some(AgentTarget::Hermes) {
         uninstall_hermes(ctx)
+    } else if agent == Some(AgentTarget::Kimi) {
+        uninstall_kimi(ctx)
     } else {
         let cursor = agent == Some(AgentTarget::Cursor);
-        uninstall_standard(global, gemini, codex, cursor, ctx)
+        let kimi = false;
+        uninstall_standard(global, gemini, codex, cursor, kimi, ctx)
     }
 }
 
@@ -2036,6 +2043,7 @@ fn run_cli() -> Result<i32> {
                     codex,
                     ctx,
                     hooks::init::uninstall_hermes,
+                    hooks::init::uninstall_kimi,
                     hooks::init::uninstall,
                 )?;
             } else if gemini {
@@ -2063,12 +2071,18 @@ fn run_cli() -> Result<i32> {
                 hooks::init::run_antigravity_mode(ctx)?;
             } else if agent == Some(AgentTarget::Hermes) {
                 hooks::init::run_hermes_mode(ctx)?;
+            } else if agent == Some(AgentTarget::Kimi) {
+                if !global {
+                    anyhow::bail!("Kimi CLI hooks are global-only. Use: rtk init -g --agent kimi");
+                }
+                hooks::init::run_kimi_mode(ctx)?;
             } else {
                 let install_opencode = opencode;
                 let install_claude = !opencode;
                 let install_cursor = agent == Some(AgentTarget::Cursor);
                 let install_windsurf = agent == Some(AgentTarget::Windsurf);
                 let install_cline = agent == Some(AgentTarget::Cline);
+                let install_kimi = agent == Some(AgentTarget::Kimi);
 
                 let patch_mode = if auto_patch {
                     hooks::init::PatchMode::Auto
@@ -2084,6 +2098,7 @@ fn run_cli() -> Result<i32> {
                     install_cursor,
                     install_windsurf,
                     install_cline,
+                    install_kimi,
                     claude_md,
                     hook_only,
                     codex,
@@ -2926,6 +2941,8 @@ mod tests {
             dry_run: true,
         };
 
+        let kimi_called = Cell::new(false);
+
         let result = uninstall_init_dispatch(
             Some(AgentTarget::Hermes),
             true,
@@ -2938,7 +2955,11 @@ mod tests {
                 assert!(ctx.dry_run);
                 Ok(())
             },
-            |_, _, _, _, _| {
+            |_ctx| {
+                kimi_called.set(true);
+                Ok(())
+            },
+            |_, _, _, _, _, _| {
                 standard_called.set(true);
                 Ok(())
             },
@@ -2946,6 +2967,42 @@ mod tests {
 
         assert!(result.is_ok());
         assert!(hermes_called.get());
+        assert!(!kimi_called.get());
+        assert!(!standard_called.get());
+    }
+
+    #[test]
+    fn test_init_uninstall_dispatch_routes_kimi_to_kimi_cleanup() {
+        let kimi_called = Cell::new(false);
+        let standard_called = Cell::new(false);
+        let ctx = hooks::init::InitContext {
+            verbose: 2,
+            dry_run: true,
+        };
+
+        let result = uninstall_init_dispatch(
+            Some(AgentTarget::Kimi),
+            true,
+            false,
+            false,
+            ctx,
+            |_ctx| {
+                Ok(())
+            },
+            |ctx| {
+                kimi_called.set(true);
+                assert_eq!(ctx.verbose, 2);
+                assert!(ctx.dry_run);
+                Ok(())
+            },
+            |_, _, _, _, _, _| {
+                standard_called.set(true);
+                Ok(())
+            },
+        );
+
+        assert!(result.is_ok());
+        assert!(kimi_called.get());
         assert!(!standard_called.get());
     }
 
