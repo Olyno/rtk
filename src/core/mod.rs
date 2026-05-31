@@ -8,6 +8,7 @@ pub mod constants;
 pub mod display_helpers;
 pub mod entropy;
 pub mod filter;
+pub mod related;
 pub mod runner;
 pub mod signatures;
 pub mod stream;
