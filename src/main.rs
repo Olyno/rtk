@@ -581,9 +581,6 @@ enum Commands {
 
     /// Filter piped stdin through rtk (e.g., cmd | rtk pipe -f cargo-test)
     Pipe {
-        /// Filter name as a positional argument (e.g. `rtk pipe log`)
-        filter_name: Option<String>,
-
         /// Filter name (cargo-test, pytest, grep, find, git-log, etc.)
         #[arg(short, long)]
         filter: Option<String>,
@@ -2503,12 +2500,10 @@ fn run_cli() -> Result<i32> {
         }
 
         Commands::Pipe {
-            filter_name,
             filter,
             passthrough,
         } => {
-            let name = filter.or(filter_name);
-            pipe_cmd::run(name.as_deref(), passthrough)?;
+            pipe_cmd::run(filter.as_deref(), passthrough)?;
             0
         }
 

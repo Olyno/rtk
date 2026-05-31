@@ -219,30 +219,6 @@ pub fn filter_ruff_check_json(output: &str) -> String {
         }
     }
 
-    // List individual violations with file:line:col so an agent can navigate
-    // straight to each one — the rule/file grouping above is a summary, not a
-    // substitute for locations.
-    const MAX_VIOLATIONS: usize = 50;
-    result.push_str("\nViolations:\n");
-    for diag in diagnostics.iter().take(MAX_VIOLATIONS) {
-        result.push_str(&format!(
-            "  … +{} more\n",
-            violation_lines.len() - MAX_VIOLATIONS
-        ));
-        let full: String = violation_lines.concat();
-        if let Some(hint) =
-            crate::core::tee::force_tee_tail_hint(&full, "ruff-check", MAX_VIOLATIONS + 1)
-        {
-            result.push_str(&format!("  {}\n", hint));
-        }
-    }
-    if diagnostics.len() > MAX_VIOLATIONS {
-        result.push_str(&format!(
-            "  ... +{} more violations\n",
-            diagnostics.len() - MAX_VIOLATIONS
-        ));
-    }
-
     if fixable_count > 0 {
         result.push_str(&format!(
             "\n[hint] Run `ruff check --fix` to auto-fix {} issues\n",
