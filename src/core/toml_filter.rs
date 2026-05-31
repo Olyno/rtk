@@ -106,6 +106,11 @@ struct TomlFilterDef {
     /// Use for tools like liquibase that emit banners/logs to stderr.
     #[serde(default)]
     filter_stderr: bool,
+    /// Entropy threshold for line-level Shannon entropy filtering.
+    /// Lines below this threshold are considered boilerplate and dropped.
+    /// Applied after head/tail_lines, before max_lines. None = disabled.
+    #[serde(default)]
+    entropy_threshold: Option<f64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -151,6 +156,9 @@ pub struct CompiledFilter {
     on_empty: Option<String>,
     /// When true, the runner should capture stderr and merge it with stdout.
     pub filter_stderr: bool,
+    /// Optional entropy threshold — lines below this Shannon entropy value are
+    /// dropped. Applied after head/tail_lines and before max_lines. None = disabled.
+    pub entropy_threshold: Option<f64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -398,6 +406,7 @@ fn compile_filter(name: String, def: TomlFilterDef) -> Result<CompiledFilter, St
         max_lines: def.max_lines,
         on_empty: def.on_empty,
         filter_stderr: def.filter_stderr,
+        entropy_threshold: def.entropy_threshold,
     })
 }
 
@@ -511,6 +520,15 @@ pub fn apply_filter(filter: &CompiledFilter, stdout: &str) -> String {
             lines = lines[omitted..].to_vec();
             lines.insert(0, format!("... ({} lines omitted)", omitted));
         }
+    }
+
+    // 7. max_lines — absolute cap applied after head/tail (includes omit messages)
+    // 6b. entropy_filter — drop low-entropy boilerplate lines (optional)
+    if let Some(threshold) = filter.entropy_threshold {
+        lines = lines
+            .into_iter()
+            .filter(|l| l.trim().is_empty() || crate::core::entropy::shannon_entropy(l) >= threshold)
+            .collect();
     }
 
     // 7. max_lines — absolute cap applied after head/tail (includes omit messages)
