@@ -1,5 +1,6 @@
 //! Building blocks shared across all RTK modules.
 
+pub mod archive;
 pub mod bounce;
 pub mod cache;
 pub mod config;

@@ -1490,6 +1490,19 @@ impl TimedExecution {
 
         // Record for bounce detection — tracks if user re-runs raw after filtered.
         crate::core::bounce::record_filtered(original_cmd);
+
+        // Archive large raw output so the full content is never lost, even if
+        // the filtered version is aggressively compressed.
+        if let Some(archive_id) =
+            crate::core::archive::archive(original_cmd, input, output)
+        {
+            let hint = crate::core::archive::archive_hint(
+                &archive_id,
+                input.len(),
+                output.len(),
+            );
+            eprintln!("{hint}");
+        }
     }
 
     /// Check the session cache for a previously filtered version of this command.
