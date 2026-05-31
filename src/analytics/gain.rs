@@ -124,6 +124,16 @@ pub fn run(
             ),
         );
         print_efficiency_meter(summary.avg_savings_pct);
+
+        // Session bounce stats — signals when filtering was too aggressive
+        let bounces = crate::core::bounce::total_bounces();
+        if bounces > 0 {
+            print_kpi(
+                "Session bounces",
+                format!("{bounces} (raw re-runs after filtered)"),
+            );
+        }
+
         println!();
 
         // Warn about hook issues that silently kill savings (stderr, not stdout)

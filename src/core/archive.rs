@@ -23,18 +23,11 @@ const ARCHIVE_TTL: Duration = Duration::from_secs(3600);
 
 /// An archived output that can be retrieved with `rtk expand <id>`.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct ArchiveEntry {
-    /// Short ID for retrieval (first 8 chars of SHA-256).
-    pub id: String,
     /// The original (unfiltered) command.
     pub command: String,
     /// The full raw output.
     pub raw_output: String,
-    /// The filtered/compressed version that was shown.
-    pub filtered_output: String,
-    /// When this entry was stored.
-    pub stored_at: SystemTime,
     /// Size of the raw output in bytes.
     pub raw_size: usize,
 }
@@ -115,12 +108,9 @@ pub fn retrieve(id: &str) -> Option<ArchiveEntry> {
     }
 
     Some(ArchiveEntry {
-        id: id.to_string(),
         command,
         raw_size: raw_output.len(),
         raw_output,
-        filtered_output: String::new(), // not stored
-        stored_at,
     })
 }
 

@@ -21,18 +21,12 @@ const CACHE_TTL: Duration = Duration::from_secs(300);
 /// A cached filtered output.
 #[derive(Debug, Clone)]
 pub struct CacheEntry {
-    #[allow(dead_code)]
-    /// SHA-256 hex digest of `command || raw_stdout || raw_stderr`.
-    pub key: String,
     /// The already-filtered output.
     pub filtered: String,
-    /// Original token count (estimated chars/4, before filtering).
+    /// Original token count (before filtering).
     pub raw_tokens: usize,
     /// Token count after filtering.
     pub filtered_tokens: usize,
-    #[allow(dead_code)]
-    /// Wall-clock time when this entry was stored.
-    pub stored_at: SystemTime,
 }
 
 /// Build the cache directory: `~/.local/share/rtk/cache/`
@@ -77,11 +71,9 @@ pub fn load_cached(key: &str) -> Option<CacheEntry> {
     }
 
     Some(CacheEntry {
-        key: key.to_string(),
         filtered,
         raw_tokens,
         filtered_tokens,
-        stored_at,
     })
 }
 

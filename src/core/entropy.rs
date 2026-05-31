@@ -2,36 +2,13 @@
 //! lines that carry no unique signal (boilerplate, repeated patterns, empty noise).
 //!
 //! Modeled after lean-ctx's entropy filter: computes per-line Shannon entropy over
-//! character frequencies, then drops lines below a configurable threshold. High-
-//! entropy lines (errors, unique identifiers, stack traces) are preserved; low-
-//! entropy lines (separators, repeated frames, padding) are dropped.
+//! character frequencies. The `shannon_entropy()` function is the production entry
+//! point, used by the TOML filter pipeline's optional `entropy_threshold` stage.
 //!
-//! This serves as an intelligent fallback when no dedicated command filter exists —
-//! it doesn't need to know the command's output format, just the information
-//! density of each line.
+//! A standalone `filter_by_entropy()` API is available in test builds for
+//! benchmarking and experimentation.
 
 use std::collections::HashMap;
-
-/// Default entropy threshold — lines with Shannon entropy below this value are
-/// considered low-information and candidates for removal.
-#[allow(dead_code)]
-const DEFAULT_ENTROPY_THRESHOLD: f64 = 2.5;
-
-/// Result of entropy filtering a block of text.
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct EntropyResult {
-    /// Filtered output (lines above threshold preserved, rest dropped).
-    pub output: String,
-    /// Number of lines in the original input.
-    pub original_lines: usize,
-    /// Number of lines kept after filtering.
-    pub kept_lines: usize,
-    /// Average entropy across all original lines.
-    pub avg_entropy: f64,
-    /// Percentage of lines kept.
-    pub keep_pct: f64,
-}
 
 /// Compute Shannon entropy (in bits) for a string over its character frequencies.
 ///
@@ -56,13 +33,23 @@ pub fn shannon_entropy(text: &str) -> f64 {
     })
 }
 
-/// Filter lines by Shannon entropy, keeping only those at or above the threshold.
-///
-/// Lines with entropy below `threshold` are considered boilerplate/noise and
-/// dropped. A line of all dashes (`---`) has entropy 0 and is always dropped.
-/// A unique error message has high entropy and is always kept.
-#[allow(dead_code)]
-pub fn filter_by_entropy(text: &str, threshold: f64) -> EntropyResult {
+// ── Standalone filtering API (test-only, not wired into production yet) ──
+
+#[cfg(test)]
+const DEFAULT_ENTROPY_THRESHOLD: f64 = 2.5;
+
+#[cfg(test)]
+#[derive(Debug)]
+struct EntropyResult {
+    output: String,
+    original_lines: usize,
+    kept_lines: usize,
+    avg_entropy: f64,
+    keep_pct: f64,
+}
+
+#[cfg(test)]
+fn filter_by_entropy(text: &str, threshold: f64) -> EntropyResult {
     let lines: Vec<&str> = text.lines().collect();
     let original_lines = lines.len();
 
@@ -73,8 +60,6 @@ pub fn filter_by_entropy(text: &str, threshold: f64) -> EntropyResult {
         let entropy = shannon_entropy(line);
         total_entropy += entropy;
 
-        // Always keep empty/whitespace-only lines — they preserve paragraph
-        // structure in logs and error output.
         if entropy >= threshold || line.trim().is_empty() {
             kept.push(*line);
         }
@@ -101,10 +86,8 @@ pub fn filter_by_entropy(text: &str, threshold: f64) -> EntropyResult {
     }
 }
 
-/// Apply entropy filtering with the default threshold (2.5 bits).
-/// This is the recommended entry point for general-purpose noise reduction.
-#[allow(dead_code)]
-pub fn filter(text: &str) -> EntropyResult {
+#[cfg(test)]
+fn filter(text: &str) -> EntropyResult {
     filter_by_entropy(text, DEFAULT_ENTROPY_THRESHOLD)
 }
 
@@ -119,13 +102,11 @@ mod tests {
 
     #[test]
     fn test_shannon_entropy_single_char() {
-        // Single character repeated = entropy 0
         assert_eq!(shannon_entropy("aaaaa"), 0.0);
     }
 
     #[test]
     fn test_shannon_entropy_unique_chars() {
-        // All chars unique = maximum entropy for length
         let e = shannon_entropy("abcdefgh");
         assert!(e > 2.5, "unique chars should have high entropy, got {e}");
     }
@@ -134,7 +115,7 @@ mod tests {
     fn test_shannon_entropy_mixed() {
         let e_repeated = shannon_entropy("------");
         let e_unique = shannon_entropy("Error: connection refused on port 8080");
-        assert!(e_unique > e_repeated, "unique content should have higher entropy");
+        assert!(e_unique > e_repeated);
     }
 
     #[test]
@@ -150,14 +131,14 @@ mod tests {
         let input = "===================================\nreal content here\n===================================";
         let result = filter(input);
         assert!(result.output.contains("real content"));
-        assert_eq!(result.kept_lines, 1); // only the content line stays
+        assert_eq!(result.kept_lines, 1);
     }
 
     #[test]
     fn test_filter_preserves_empty_lines() {
         let input = "line1\n\nline2";
-        let result = filter_by_entropy(input, 1.0); // low threshold for short lines
-        assert_eq!(result.kept_lines, 3); // empty line preserved
+        let result = filter_by_entropy(input, 1.0);
+        assert_eq!(result.kept_lines, 3);
     }
 
     #[test]

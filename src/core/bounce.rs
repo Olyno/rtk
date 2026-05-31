@@ -83,7 +83,6 @@ impl BounceState {
         found
     }
 
-    #[allow(dead_code)]
     fn total_bounces(&self) -> u64 {
         self.total_bounces
     }
@@ -109,7 +108,6 @@ pub fn check_bounce(command: &str) -> bool {
 }
 
 /// Total number of bounce events detected in this session.
-#[allow(dead_code)]
 pub fn total_bounces() -> u64 {
     if let Ok(state) = BOUNCE_TRACKER.lock() {
         state.total_bounces()
