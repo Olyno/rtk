@@ -1487,6 +1487,9 @@ impl TimedExecution {
         // Store in session cache so repeated identical commands skip filtering.
         let key = crate::core::cache::cache_key(original_cmd, input, "");
         crate::core::cache::store_cached(&key, input, output);
+
+        // Record for bounce detection — tracks if user re-runs raw after filtered.
+        crate::core::bounce::record_filtered(original_cmd);
     }
 
     /// Check the session cache for a previously filtered version of this command.
@@ -1552,6 +1555,15 @@ impl TimedExecution {
         // input_tokens=0, output_tokens=0 won't dilute savings statistics
         if let Ok(tracker) = Tracker::new() {
             let _ = tracker.record(original_cmd, rtk_cmd, 0, 0, elapsed_ms);
+        }
+
+        // Check if this raw execution is a bounce of a recent filtered version.
+        if crate::core::bounce::check_bounce(original_cmd) {
+            eprintln!(
+                "rtk: bounce detected — raw '{}' was run after filtered version.\n\
+                 Consider adding '-v' next time or adjusting the filter level.",
+                original_cmd
+            );
         }
     }
 }
