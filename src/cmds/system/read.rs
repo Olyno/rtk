@@ -2,6 +2,7 @@
 
 use crate::core::filter::{self, FilterLevel, Language};
 use crate::core::tracking;
+use crate::ReadMode;
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::Path;
@@ -9,6 +10,7 @@ use std::path::Path;
 pub fn run(
     file: &Path,
     level: FilterLevel,
+    mode: ReadMode,
     max_lines: Option<usize>,
     tail_lines: Option<usize>,
     line_numbers: bool,
@@ -17,58 +19,65 @@ pub fn run(
     let timer = tracking::TimedExecution::start();
 
     if verbose > 0 {
-        eprintln!("Reading: {} (filter: {})", file.display(), level);
+        eprintln!("Reading: {} (filter: {}, mode: {:?})", file.display(), level, mode);
     }
 
     // Read file content
     let content = fs::read_to_string(file)
         .with_context(|| format!("Failed to read file: {}", file.display()))?;
 
-    // Detect language from extension
-    let lang = file
+    let ext = file
         .extension()
         .and_then(|e| e.to_str())
-        .map(Language::from_extension)
-        .unwrap_or(Language::Unknown);
+        .unwrap_or("");
 
-    if verbose > 1 {
-        eprintln!("Detected language: {:?}", lang);
-    }
+    // Signature/map modes bypass regular filtering
+    let output = match mode {
+        ReadMode::Signatures => {
+            crate::core::signatures::extract_signatures(&content, ext)
+        }
+        ReadMode::Map => {
+            crate::core::signatures::extract_map(&content, ext)
+        }
+        ReadMode::Full => {
+            // Regular filtering pipeline
+            let lang = Language::from_extension(ext);
+            let filter = filter::get_filter(level);
+            let mut filtered = filter.filter(&content, &lang);
 
-    // Apply filter
-    let filter = filter::get_filter(level);
-    let mut filtered = filter.filter(&content, &lang);
-
-    // Safety: if filter emptied a non-empty file, fall back to raw content
-    if filtered.trim().is_empty() && !content.trim().is_empty() {
-        eprintln!(
-            "rtk: warning: filter produced empty output for {} ({} bytes), showing raw content",
-            file.display(),
-            content.len()
-        );
-        filtered = content.clone();
-    }
+            // Safety: if filter emptied a non-empty file, fall back to raw content
+            if filtered.trim().is_empty() && !content.trim().is_empty() {
+                eprintln!(
+                    "rtk: warning: filter produced empty output for {} ({} bytes), showing raw content",
+                    file.display(),
+                    content.len()
+                );
+                filtered = content.clone();
+            }
+            filtered
+        }
+    };
 
     if verbose > 0 {
         let original_lines = content.lines().count();
-        let filtered_lines = filtered.lines().count();
+        let output_lines = output.lines().count();
         let reduction = if original_lines > 0 {
-            ((original_lines - filtered_lines) as f64 / original_lines as f64) * 100.0
+            ((original_lines - output_lines) as f64 / original_lines as f64) * 100.0
         } else {
             0.0
         };
         eprintln!(
             "Lines: {} -> {} ({:.1}% reduction)",
-            original_lines, filtered_lines, reduction
+            original_lines, output_lines, reduction
         );
     }
 
-    filtered = apply_line_window(&filtered, max_lines, tail_lines, &lang);
+    let output = apply_line_window(&output, max_lines, tail_lines, &Language::from_extension(ext));
 
     let rtk_output = if line_numbers {
-        format_with_line_numbers(&filtered)
+        format_with_line_numbers(&output)
     } else {
-        filtered.clone()
+        output.clone()
     };
     print!("{}", rtk_output);
     timer.track(
@@ -194,7 +203,7 @@ fn main() {{
         )?;
 
         // Just verify it doesn't panic
-        run(file.path(), FilterLevel::Minimal, None, None, false, 0)?;
+        run(file.path(), FilterLevel::Minimal, ReadMode::Full, None, None, false, 0)?;
         Ok(())
     }
 

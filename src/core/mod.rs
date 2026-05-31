@@ -8,6 +8,7 @@ pub mod display_helpers;
 pub mod entropy;
 pub mod filter;
 pub mod runner;
+pub mod signatures;
 pub mod stream;
 pub mod tee;
 pub mod telemetry;
