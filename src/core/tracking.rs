@@ -1449,6 +1449,7 @@ impl TimedExecution {
     /// - Elapsed time since [`start`](Self::start)
     /// - Token counts estimated from input/output strings
     /// - Calculated savings metrics
+    /// - Stores filtered output in session cache for future reuse
     ///
     /// # Arguments
     ///
@@ -1481,6 +1482,48 @@ impl TimedExecution {
                 elapsed_ms,
             );
         }
+
+        // Store in session cache so repeated identical commands skip filtering.
+        let key = crate::core::cache::cache_key(original_cmd, input, "");
+        crate::core::cache::store_cached(&key, input, output);
+    }
+
+    /// Check the session cache for a previously filtered version of this command.
+    ///
+    /// Returns `Some(cached_output_with_footer)` if the same command produced
+    /// identical raw output within the cache TTL (5 min by default). Returns
+    /// `None` if there's no valid cached entry — the caller should proceed
+    /// with normal filtering.
+    ///
+    /// The returned string includes a `[rtk: cached]` footer so the user knows
+    /// the output was served from cache.
+    ///
+    /// # Arguments
+    ///
+    /// - `original_cmd`: The command that was executed (e.g., "git status")
+    /// - `raw_output`: The raw (unfiltered) stdout+stderr
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use rtk::tracking::TimedExecution;
+    ///
+    /// let timer = TimedExecution::start();
+    /// let raw = "output...";
+    /// if let Some(cached) = timer.check_cache("git status", raw) {
+    ///     println!("{cached}");
+    ///     return Ok(0);
+    /// }
+    /// // ... filter normally ...
+    /// ```
+    pub fn check_cache(&self, original_cmd: &str, raw_output: &str) -> Option<String> {
+        let key = crate::core::cache::cache_key(original_cmd, raw_output, "");
+        let entry = crate::core::cache::load_cached(&key)?;
+        let saved = entry.raw_tokens.saturating_sub(entry.filtered_tokens);
+        Some(format!(
+            "{}\n[rtk: cached, -{} tokens]",
+            entry.filtered, saved
+        ))
     }
 
     /// Track passthrough commands (timing-only, no token counting).
