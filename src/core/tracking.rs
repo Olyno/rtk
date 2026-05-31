@@ -1391,8 +1391,9 @@ pub fn record_potential_silent(command: &str, input_tokens: usize, elapsed_ms: u
 /// assert_eq!(estimate_tokens("hello world"), 3); // 11 chars = ceil(2.75) = 3
 /// ```
 pub fn estimate_tokens(text: &str) -> usize {
-    // ~4 chars per token on average
-    (text.len() as f64 / 4.0).ceil() as usize
+    // Use tiktoken-rs o200k_base when available (accurate for GPT-4o/Claude).
+    // Falls back to chars/4 if the model file can't be loaded.
+    crate::core::tokenizer::estimate_tokens(text)
 }
 
 /// Helper struct for timing command execution
@@ -1580,14 +1581,18 @@ pub fn args_display(args: &[OsString]) -> String {
 mod tests {
     use super::*;
 
-    // 1. estimate_tokens — verify ~4 chars/token ratio
+    // 1. estimate_tokens — verify it returns sensible counts
     #[test]
     fn test_estimate_tokens() {
         assert_eq!(estimate_tokens(""), 0);
-        assert_eq!(estimate_tokens("abcd"), 1); // 4 chars = 1 token
-        assert_eq!(estimate_tokens("abcde"), 2); // 5 chars = ceil(1.25) = 2
-        assert_eq!(estimate_tokens("a"), 1); // 1 char = ceil(0.25) = 1
-        assert_eq!(estimate_tokens("12345678"), 2); // 8 chars = 2 tokens
+        assert!(estimate_tokens("abcd") > 0);
+        assert!(estimate_tokens("abcde") > 0);
+        assert!(estimate_tokens("a") > 0);
+        assert!(estimate_tokens("12345678") > 0);
+        // Longer text should produce more tokens than shorter
+        let short = estimate_tokens("hi");
+        let long = estimate_tokens("this is a much longer piece of text for testing");
+        assert!(long > short);
     }
 
     // 2. args_display — format OsString vec

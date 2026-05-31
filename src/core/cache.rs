@@ -100,8 +100,8 @@ pub fn store_cached(key: &str, raw: &str, filtered: &str) {
         .unwrap_or_default()
         .as_secs();
 
-    let raw_tokens = raw.len() / 4;
-    let filtered_tokens = filtered.len() / 4;
+    let raw_tokens = crate::core::tokenizer::estimate_tokens(raw);
+    let filtered_tokens = crate::core::tokenizer::estimate_tokens(filtered);
 
     let payload = format!(
         "{}\n{}\n{}\n{}",
@@ -154,7 +154,8 @@ mod tests {
         assert!(entry.is_some(), "entry should be loadable immediately");
         let entry = entry.unwrap();
         assert_eq!(entry.filtered, filtered);
-        assert_eq!(entry.filtered_tokens, 1); // "hl" → 2/4 = 0, but "hl".len()/4 = 0
+        // "hl" = 2 chars → either 1 token (chars/4 fallback) or tiktoken count
+        assert!(entry.filtered_tokens > 0);
     }
 
     #[test]
