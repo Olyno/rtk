@@ -188,7 +188,10 @@ fn read_json(path: &std::path::Path) -> Option<Value> {
     match serde_json::from_str::<Value>(&content) {
         Ok(v) => Some(v),
         Err(_) => {
-            eprintln!("[rtk] warning: failed to parse permissions from {}", path.display());
+            eprintln!(
+                "[rtk] warning: failed to parse permissions from {}",
+                path.display()
+            );
             None
         }
     }
@@ -930,6 +933,47 @@ mod tests {
         assert_eq!(
             check_command_with_rules("git push --force 2>&1", &deny, &[], &allow),
             PermissionVerdict::Deny
+        );
+    }
+
+    // --- Per-host rule extraction ---
+
+    #[test]
+    fn test_wrapped_rules_cursor_shell_only() {
+        let v = serde_json::json!(["Shell(git)", "Shell(curl:*)", "Read(src/**)", "Shell(npm test)"]);
+        let mut out = Vec::new();
+        append_wrapped_rules(Some(&v), &["Shell("], &mut out);
+        assert_eq!(out, vec!["git", "curl:*", "npm test"]);
+    }
+
+    #[test]
+    fn test_wrapped_rules_gemini_shell_variants() {
+        let v = serde_json::json!([
+            "run_shell_command(git)",
+            "ShellTool(npm test)",
+            "read_file",
+            "run_shell_command"
+        ]);
+        let mut out = Vec::new();
+        append_wrapped_rules(Some(&v), &["run_shell_command(", "ShellTool("], &mut out);
+        assert_eq!(out, vec!["git", "npm test", "*"]);
+    }
+
+    #[test]
+    fn test_wrapped_rules_extracted_patterns_match() {
+        let mut allow = Vec::new();
+        append_wrapped_rules(
+            Some(&serde_json::json!(["Shell(git)"])),
+            &["Shell("],
+            &mut allow,
+        );
+        assert_eq!(
+            check_command_with_rules("git status", &[], &[], &allow),
+            PermissionVerdict::Allow
+        );
+        assert_eq!(
+            check_command_with_rules("rm -rf /", &[], &[], &allow),
+            PermissionVerdict::Default
         );
     }
 }
