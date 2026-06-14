@@ -8,48 +8,67 @@ use anyhow::{Context, Result};
 use regex::Regex;
 use std::collections::HashMap;
 
-/// Short flags (exact 2-char form `-X`) that consume one following token as their value.
-/// `-e` is handled separately — its value goes into `patterns`, not `flags`.
-/// Deliberately small: unknown flags pass through unchanged. The failure mode
-/// for a missing entry is a visible wrong result, not a silent corruption.
-const VALUE_FLAGS_SHORT: &[u8] = b"ABCgfjm";
+/// Short single-char flags that consume one following token (or inline remainder)
+/// as their value. `-e` is handled separately — its value goes to `patterns`.
+/// Includes all rg short flags that take a value argument except `-e` and `-r`
+/// (stripped) and `-E` (dialect, left to #2138). Failure mode for a missing
+/// entry: the value becomes a positional (visible wrong result, not silent).
+const VALUE_FLAGS_SHORT: &[u8] = b"ABCgfjmtTdM";
 
-/// Normalise short flags arg for rg forwarding.
-/// Returns `None` when the entire flag is stripped (grep-ism recursive flags).
-fn strip_r(arg: &str) -> Option<String> {
-    match arg
-        .chars()
-        .filter(|&c| c != 'r' && c != 'R')
-        .collect::<String>()
-    {
-        s if !s.is_empty() => Some(s),
-        _ => None,
-    }
-}
+/// Long flags that consume the NEXT token as their value (space-separated form).
+/// Inline `=` form (`--flag=value`) is one token and passes through unchanged.
+/// `--regexp` is handled separately (its value goes to `patterns`).
+/// `--encoding` value is consumed correctly here; dialect routing is #2138's job.
+const VALUE_FLAGS_LONG: &[&str] = &[
+    "--file",
+    "--glob",
+    "--iglob",
+    "--type",
+    "--type-not",
+    "--type-add",
+    "--type-clear",
+    "--max-count",
+    "--max-depth",
+    "--max-filesize",
+    "--max-columns",
+    "--after-context",
+    "--before-context",
+    "--context",
+    "--encoding",
+    "--engine",
+    "--sort",
+    "--sortr",
+    "--threads",
+    "--replace",
+    "--pre",
+    "--pre-glob",
+    "--path-separator",
+    "--ignore-file",
+    "--field-match-separator",
+    "--field-context-separator",
+    "--context-separator",
+    "--color",
+    "--colors",
+];
 
-/// Normalise long flag arg for rg forwarding.
-/// Returns `None` when the flag should be dropped (grep-ism recursive flags).
+/// Drop `--recursive` (grep-ism); pass all other long flags through unchanged.
 fn strip_recursive(arg: &str) -> Option<String> {
     match arg {
-        // Drop recursive flags that would change semantics in rg.
         "--recursive" => None,
-        // Everything else pass through unchanged.
         _ => Some(arg.to_string()),
     }
 }
 
 /// Extracts `(patterns, paths, flags)` from the raw trailing args.
 ///
-/// - `patterns`: first non-flag positional prepended to any `-e` values.
-///   All patterns are passed to rg as `-e` flags, so positional and `-e` are
-///   interchangeable from rg's perspective. Empty → caller should error.
-/// - `paths`: all subsequent non-flag positionals. Empty → caller defaults to `["."]`.
-/// - `flags`: other flags forwarded to rg (recursive flags already stripped).
+/// - `patterns`: positional pattern + all `-e`/`--regexp` values. Empty → error.
+/// - `paths`: subsequent non-flag positionals. Empty → caller defaults to `["."]`.
+/// - `flags`: other flags forwarded to rg (`-r`/`-R`/`--recursive` stripped).
 ///
-/// Value-taking short flags (see `VALUE_FLAGS_SHORT`) consume the next token
-/// as their value so it is not mistaken for the pattern. Combined clusters like
-/// `-rn` have `r`/`R` stripped before forwarding. `--` marks everything after
-/// it as positional even if flag-shaped.
+/// Short clusters are scanned left-to-right; the first value-taking letter
+/// terminates the cluster — everything after it is its inline value, not a
+/// separate flag. Long value-taking flags consume the next token. `--` marks
+/// everything after it as positional.
 fn extract_pattern_path<T: AsRef<str>>(args: &[T]) -> (Vec<String>, Vec<String>, Vec<String>) {
     let mut e_patterns: Vec<String> = Vec::new();
     let mut positionals: Vec<String> = Vec::new();
@@ -72,8 +91,29 @@ fn extract_pattern_path<T: AsRef<str>>(args: &[T]) -> (Vec<String>, Vec<String>,
             continue;
         }
 
-        // Long flags (--foo, --recursive): strip or pass through unchanged
         if arg.starts_with("--") {
+            // --regexp is the long form of -e: value goes to patterns.
+            if arg == "--regexp" {
+                if i + 1 < args.len() {
+                    e_patterns.push(args[i + 1].as_ref().to_string());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+            // Other long value-taking flags: consume next token as value.
+            if VALUE_FLAGS_LONG.contains(&arg) {
+                flags.push(arg.to_string());
+                if i + 1 < args.len() {
+                    flags.push(args[i + 1].as_ref().to_string());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+            // Drop --recursive; pass everything else through.
             if let Some(cleaned) = strip_recursive(arg) {
                 flags.push(cleaned);
             }
@@ -83,42 +123,56 @@ fn extract_pattern_path<T: AsRef<str>>(args: &[T]) -> (Vec<String>, Vec<String>,
 
         match arg.strip_prefix('-') {
             Some(rest) if !rest.is_empty() => {
-                let last = *rest.as_bytes().last().unwrap();
-                let last_is_e = last == b'e';
-                let last_takes_value = last_is_e || VALUE_FLAGS_SHORT.contains(&last);
-
-                if last_takes_value {
-                    // Emit cleaned prefix (everything before last char, r/R stripped)
-                    if let Some(prefix) = strip_r(&rest[..rest.len() - 1]) {
-                        flags.push(format!("-{}", prefix));
+                // Left-to-right scan: r/R stripped, first value-taking char terminates.
+                let bytes = rest.as_bytes();
+                let mut bool_acc = String::new();
+                let mut consumed_value = false;
+                let mut j = 0;
+                while j < bytes.len() {
+                    let ch = bytes[j];
+                    if ch == b'r' || ch == b'R' {
+                        j += 1;
+                        continue;
                     }
-
-                    let value = if i + 1 < args.len() {
-                        let v = args[i + 1].as_ref().to_string();
-                        i += 2;
-                        Some(v)
-                    } else {
-                        i += 1;
-                        None
-                    };
-
-                    if last_is_e {
-                        if let Some(v) = value {
-                            e_patterns.push(v);
+                    let is_e = ch == b'e';
+                    if is_e || VALUE_FLAGS_SHORT.contains(&ch) {
+                        if !bool_acc.is_empty() {
+                            flags.push(format!("-{}", bool_acc));
+                        }
+                        // Inline value = bytes after this char in the cluster.
+                        let inline = std::str::from_utf8(&bytes[j + 1..]).unwrap_or("");
+                        if is_e {
+                            if !inline.is_empty() {
+                                e_patterns.push(inline.to_string());
+                                i += 1;
+                            } else if i + 1 < args.len() {
+                                e_patterns.push(args[i + 1].as_ref().to_string());
+                                i += 2;
+                            } else {
+                                flags.push("-e".to_string());
+                                i += 1;
+                            }
                         } else {
-                            // -e without a value: treat "e" as a normal flag to avoid losing the pattern.
-                            flags.push("-e".to_string());
+                            flags.push(format!("-{}", ch as char));
+                            if !inline.is_empty() {
+                                flags.push(inline.to_string());
+                                i += 1;
+                            } else if i + 1 < args.len() {
+                                flags.push(args[i + 1].as_ref().to_string());
+                                i += 2;
+                            } else {
+                                i += 1;
+                            }
                         }
-                    } else {
-                        flags.push(format!("-{}", last as char));
-                        if let Some(v) = value {
-                            flags.push(v);
-                        }
+                        consumed_value = true;
+                        break;
                     }
-                } else {
-                    // No value-taking flag at end: strip r/R, forward remainder
-                    if let Some(cleaned) = strip_r(rest) {
-                        flags.push(format!("-{}", cleaned));
+                    bool_acc.push(ch as char);
+                    j += 1;
+                }
+                if !consumed_value {
+                    if !bool_acc.is_empty() {
+                        flags.push(format!("-{}", bool_acc));
                     }
                     i += 1;
                 }
@@ -130,8 +184,8 @@ fn extract_pattern_path<T: AsRef<str>>(args: &[T]) -> (Vec<String>, Vec<String>,
         }
     }
 
-    // If -e was used: all positionals are paths; -e values are the patterns.
-    // If -e was not used: first positional is the pattern, rest are paths.
+    // If -e/--regexp was used: all positionals are paths.
+    // Otherwise: first positional is the pattern, rest are paths.
     let (patterns, paths) = if !e_patterns.is_empty() {
         (e_patterns, positionals)
     } else {
@@ -382,6 +436,7 @@ fn has_format_flag<T: AsRef<str>>(extra_args: &[T]) -> bool {
         matches!(
             arg.as_ref(),
             "-c" | "--count"
+                | "--count-matches"
                 | "-l"
                 | "--files-with-matches"
                 | "-L"
@@ -390,6 +445,9 @@ fn has_format_flag<T: AsRef<str>>(extra_args: &[T]) -> bool {
                 | "--only-matching"
                 | "-Z"
                 | "--null"
+                | "--json"
+                | "--passthru"
+                | "--files"
         )
     })
 }
@@ -501,18 +559,7 @@ mod tests {
         assert_eq!(rg_pattern, "fn foo|pub.*bar");
     }
 
-    // --- process_flag ---
-
-    #[test]
-    fn test_strip_r() {
-        assert_eq!(strip_r(""), None);
-        assert_eq!(strip_r("r"), None);
-        assert_eq!(strip_r("rr"), None);
-        assert_eq!(strip_r("R"), None);
-        assert_eq!(strip_r("rn"), Some("n".to_string()));
-        assert_eq!(strip_r("Rni"), Some("ni".to_string()));
-        assert_eq!(strip_r("i"), Some("i".to_string()));
-    }
+    // --- strip_recursive ---
 
     #[test]
     fn test_strip_recursive() {
@@ -640,6 +687,172 @@ mod tests {
         assert_eq!(patterns, vec!["foo", "bar"]);
         assert_eq!(paths, vec!["src"]);
         assert_eq!(flags, vec!["-e"]);
+    }
+
+    // --- inline short flag values (Bug 5) ---
+
+    #[test]
+    fn test_extract_inline_e_value() {
+        // -ecarrot: e hits at j=0, inline="carrot", no r-stripping on value
+        let (patterns, paths, flags) = extract_pattern_path(&["-ecarrot", "file"]);
+        assert_eq!(patterns, vec!["carrot"]);
+        assert_eq!(paths, vec!["file"]);
+        assert!(flags.is_empty());
+    }
+
+    #[test]
+    fn test_extract_inline_e_value_no_rstrip() {
+        // -ecarrot: the 'r' in "carrot" must NOT be stripped (it's value, not a flag)
+        let (patterns, _, _) = extract_pattern_path(&["-ecarrot", "file"]);
+        assert_eq!(patterns, vec!["carrot"], "r in inline value must not be stripped");
+    }
+
+    #[test]
+    fn test_extract_inline_g_value() {
+        // -g*.rs: g hits at j=0, inline="*.rs", no r-stripping on value
+        let (patterns, paths, flags) = extract_pattern_path(&["aaa", "sub", "-g*.rs"]);
+        assert_eq!(patterns, vec!["aaa"]);
+        assert_eq!(paths, vec!["sub"]);
+        assert_eq!(flags, vec!["-g", "*.rs"]);
+    }
+
+    #[test]
+    fn test_extract_inline_g_value_no_rstrip() {
+        // -g*.rs: the 'r' in "*.rs" must NOT be stripped
+        let (_, _, flags) = extract_pattern_path(&["aaa", "sub", "-g*.rs"]);
+        assert!(flags.contains(&"*.rs".to_string()), "r in glob value must not be stripped");
+    }
+
+    // --- long value-taking flags (Bug 5) ---
+
+    #[test]
+    fn test_extract_long_glob_value() {
+        let (patterns, paths, flags) =
+            extract_pattern_path(&["compact", "sub", "--glob", "*.md"]);
+        assert_eq!(patterns, vec!["compact"]);
+        assert_eq!(paths, vec!["sub"]);
+        assert_eq!(flags, vec!["--glob", "*.md"]);
+    }
+
+    #[test]
+    fn test_extract_long_max_count() {
+        let (patterns, paths, flags) =
+            extract_pattern_path(&["--max-count", "1", "fn", "file"]);
+        assert_eq!(patterns, vec!["fn"]);
+        assert_eq!(paths, vec!["file"]);
+        assert_eq!(flags, vec!["--max-count", "1"]);
+    }
+
+    #[test]
+    fn test_extract_short_type() {
+        // -t rust: type filter, value must not become pattern
+        let (patterns, paths, flags) = extract_pattern_path(&["-t", "rust", "fn", "src"]);
+        assert_eq!(patterns, vec!["fn"]);
+        assert_eq!(paths, vec!["src"]);
+        assert_eq!(flags, vec!["-t", "rust"]);
+    }
+
+    #[test]
+    fn test_extract_short_max_depth() {
+        // -d 3: max-depth, value must not become pattern
+        let (patterns, paths, flags) = extract_pattern_path(&["-d", "3", "foo", "src"]);
+        assert_eq!(patterns, vec!["foo"]);
+        assert_eq!(paths, vec!["src"]);
+        assert_eq!(flags, vec!["-d", "3"]);
+    }
+
+    #[test]
+    fn test_extract_short_max_columns() {
+        // -M 120: max-columns, value must not become pattern
+        let (patterns, paths, flags) = extract_pattern_path(&["-M", "120", "foo", "src"]);
+        assert_eq!(patterns, vec!["foo"]);
+        assert_eq!(paths, vec!["src"]);
+        assert_eq!(flags, vec!["-M", "120"]);
+    }
+
+    #[test]
+    fn test_extract_long_regexp() {
+        // --regexp is the long form of -e; value goes to patterns
+        let (patterns, paths, flags) = extract_pattern_path(&["--regexp", "fn run", "src"]);
+        assert_eq!(patterns, vec!["fn run"]);
+        assert_eq!(paths, vec!["src"]);
+        assert!(flags.is_empty());
+    }
+
+    #[test]
+    fn test_extract_long_regexp_multi() {
+        // --regexp can be combined with -e
+        let (patterns, paths, _) =
+            extract_pattern_path(&["--regexp", "foo", "-e", "bar", "src"]);
+        assert_eq!(patterns, vec!["foo", "bar"]);
+        assert_eq!(paths, vec!["src"]);
+    }
+
+    #[test]
+    fn test_extract_long_ignore_file() {
+        let (patterns, paths, flags) =
+            extract_pattern_path(&["--ignore-file", ".myignore", "foo", "src"]);
+        assert_eq!(patterns, vec!["foo"]);
+        assert_eq!(paths, vec!["src"]);
+        assert_eq!(flags, vec!["--ignore-file", ".myignore"]);
+    }
+
+    #[test]
+    fn test_extract_long_engine() {
+        let (patterns, paths, flags) =
+            extract_pattern_path(&["--engine", "pcre2", "foo", "src"]);
+        assert_eq!(patterns, vec!["foo"]);
+        assert_eq!(paths, vec!["src"]);
+        assert_eq!(flags, vec!["--engine", "pcre2"]);
+    }
+
+    #[test]
+    fn test_extract_long_type_clear() {
+        let (patterns, paths, flags) =
+            extract_pattern_path(&["--type-clear", "rust", "foo", "src"]);
+        assert_eq!(patterns, vec!["foo"]);
+        assert_eq!(paths, vec!["src"]);
+        assert_eq!(flags, vec!["--type-clear", "rust"]);
+    }
+
+    #[test]
+    fn test_extract_long_path_separator() {
+        let (patterns, paths, flags) =
+            extract_pattern_path(&["--path-separator", "/", "foo", "src"]);
+        assert_eq!(patterns, vec!["foo"]);
+        assert_eq!(paths, vec!["src"]);
+        assert_eq!(flags, vec!["--path-separator", "/"]);
+    }
+
+    #[test]
+    fn test_extract_long_flag_inline_eq_passthrough() {
+        // --glob=*.rs is one token (inline =): passes through as-is, not consumed as pair
+        let (patterns, paths, flags) = extract_pattern_path(&["foo", "src", "--glob=*.rs"]);
+        assert_eq!(patterns, vec!["foo"]);
+        assert_eq!(paths, vec!["src"]);
+        assert_eq!(flags, vec!["--glob=*.rs"]);
+    }
+
+    // --- has_format_flag additions ---
+
+    #[test]
+    fn test_format_flag_detects_count_matches() {
+        assert!(has_format_flag(&["--count-matches"]));
+    }
+
+    #[test]
+    fn test_format_flag_detects_json() {
+        assert!(has_format_flag(&["--json"]));
+    }
+
+    #[test]
+    fn test_format_flag_detects_passthru() {
+        assert!(has_format_flag(&["--passthru"]));
+    }
+
+    #[test]
+    fn test_format_flag_detects_files() {
+        assert!(has_format_flag(&["--files"]));
     }
 
     // --- truncation accuracy ---
