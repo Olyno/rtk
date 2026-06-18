@@ -2287,6 +2287,43 @@ error: aborting due to 1 previous error
     }
 
     #[test]
+    fn test_filter_cargo_build_json_savings() {
+        // Real --message-format=json lines carry a verbose envelope (spans,
+        // children, code, message) around the human `rendered` text. The filter
+        // keeps only `rendered` and caps the list, so savings come from both
+        // dropping the envelope and capping a large failing build.
+        let template = r#"{"reason":"compiler-message","package_id":"demo 0.1.0 (path+file:///tmp/demo)","manifest_path":"/tmp/demo/Cargo.toml","target":{"kind":["bin"],"crate_types":["bin"],"name":"demo","src_path":"/tmp/demo/src/main.rs","edition":"2021","doc":true,"doctest":false,"test":true},"message":{"rendered":"error[E0308]: mismatched types\n  --> src/main.rs:IDX:18\n   |\nIDX |     let _xIDX: i32 = \"errIDX\";\n   |               ---   ^^^^^^^ expected `i32`, found `&str`\n   |               |\n   |               expected due to this\n\n","$message_type":"diagnostic","children":[{"children":[],"code":null,"level":"note","message":"expected due to the type annotation here","rendered":null,"spans":[]}],"code":{"code":"E0308","explanation":null},"level":"error","message":"mismatched types","spans":[{"byte_end":40,"byte_start":33,"column_end":25,"column_start":18,"expansion":null,"file_name":"src/main.rs","is_primary":true,"label":"expected `i32`, found `&str`","line_end":IDX,"line_start":IDX,"suggested_replacement":null,"suggestion_applicability":null,"text":[{"highlight_end":25,"highlight_start":18,"text":"    let _xIDX: i32 = \"errIDX\";"}]}]}}"#;
+
+        let total = CAP_ERRORS + 30;
+        let mut input = String::new();
+        for i in 0..total {
+            input.push_str(&template.replace("IDX", &i.to_string()));
+            input.push('\n');
+        }
+        input.push_str(r#"{"reason":"build-finished","success":false}"#);
+        input.push('\n');
+
+        let result = filter_cargo_build(&input);
+
+        // The cap is what bounds the output, so assert it holds here too.
+        let rendered = result.matches("error[E0308]").count();
+        assert_eq!(rendered, CAP_ERRORS, "json errors must be capped: {}", result);
+        assert!(
+            result.contains(&format!("… +{} more errors", total - CAP_ERRORS)),
+            "expected overflow hint: {}",
+            result
+        );
+
+        let raw = input.split_whitespace().count();
+        let out = result.split_whitespace().count();
+        let savings = 100.0 - (out as f64 / raw as f64) * 100.0;
+        assert!(
+            savings >= 60.0,
+            "token savings dropped below 60%: {savings:.1}%"
+        );
+    }
+
+    #[test]
     fn test_cargo_test_stream_all_pass() {
         let input = r#"   Compiling rtk v0.5.0
     Finished test [unoptimized + debuginfo] target(s) in 2.53s
