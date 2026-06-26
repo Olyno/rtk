@@ -1715,7 +1715,6 @@ fn run_worktree(args: &[String], verbose: u8, global_args: &[String]) -> Result<
     let result = exec_capture(&mut cmd).context("Failed to run git worktree list")?;
 
     if !result.success() {
-        eprintln!("FAILED: git worktree list");
         if !result.stderr.trim().is_empty() {
             eprintln!("{}", result.stderr);
         }
