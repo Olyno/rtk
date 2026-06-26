@@ -3037,6 +3037,13 @@ mod tests {
             "golangci-lint",
             "gradlew",
             "mvn",
+            "php",
+            "phpunit",
+            "phpstan",
+            "pest",
+            "paratest",
+            "ecs",
+            "pint",
         ];
 
         let unclassified: Vec<String> = Cli::command()
