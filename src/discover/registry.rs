@@ -258,6 +258,14 @@ fn normalize_php_tool_command(cmd: &str) -> String {
     normalize_php_tool_command_with_dirs(cmd, &composer_bin_dirs())
 }
 
+/// Peel a leading `php` interpreter wrapper off a Composer-tool invocation
+/// (`php vendor/bin/phpunit …` → `vendor/bin/phpunit …`) so the tool path
+/// normalizes to its bare name. Only meaningful for the resolved tools, where
+/// a `php` prefix is always the interpreter (never `php artisan`/`run-tests.php`).
+fn strip_php_wrapper(cmd: &str) -> &str {
+    cmd.strip_prefix("php ").map_or(cmd, str::trim_start)
+}
+
 fn normalize_php_tool_command_with_dirs(cmd: &str, bin_dirs: &[std::path::PathBuf]) -> String {
     let first_space = cmd.find(char::is_whitespace);
     let first_word = match first_space {
@@ -916,9 +924,30 @@ fn rewrite_segment_inner(
         }
     }
 
+    // For the Composer-resolved php tools, normalize the leading invocation
+    // (php wrapper + ini flags, ./, vendor/bin, composer bin-dir) exactly as
+    // classify_command does, so a small canonical prefix list matches every
+    // invocation form instead of enumerating each literal spelling.
+    let php_normalized;
+    let strip_target: &str = if rule
+        .rtk_cmd
+        .strip_prefix("rtk ")
+        .is_some_and(|t| PHP_TOOL_NAMES.contains(&t))
+    {
+        // Peel `php ` then a leading `./` (normalize_php_tool_command only
+        // strips `./` for paths that resolve to a Composer tool, so a plain
+        // `./bin/<tool>` would otherwise survive and miss the prefix match).
+        let unwrapped = strip_php_wrapper(cmd_part);
+        let unwrapped = unwrapped.strip_prefix("./").unwrap_or(unwrapped);
+        php_normalized = normalize_php_tool_command(unwrapped);
+        &php_normalized
+    } else {
+        cmd_part
+    };
+
     // Try each rewrite prefix (longest first) with word-boundary check
     for &prefix in rule.rewrite_prefixes {
-        if let Some(rest) = strip_word_prefix(cmd_part, prefix) {
+        if let Some(rest) = strip_word_prefix(strip_target, prefix) {
             let rewritten = if rest.is_empty() {
                 format!("{}{}", rule.rtk_cmd, redirect_suffix)
             } else {
@@ -4305,6 +4334,43 @@ mod tests {
             rewrite_command_no_prefixes("./vendor/bin/phpunit --filter EmailTest", &[]),
             Some("rtk phpunit --filter EmailTest".into())
         );
+    }
+
+    #[test]
+    fn test_rewrite_php_tool_invocation_forms() {
+        // phpunit carries the full matrix: php wrapper, ./, plain bin/, vendor/bin.
+        // rewrite_segment_inner normalizes each to the same canonical rewrite.
+        for cmd in [
+            "phpunit tests/",
+            "vendor/bin/phpunit tests/",
+            "./vendor/bin/phpunit tests/",
+            "bin/phpunit tests/",
+            "./bin/phpunit tests/",
+            "php vendor/bin/phpunit tests/",
+            "php phpunit tests/",
+        ] {
+            assert_eq!(
+                rewrite_command_no_prefixes(cmd, &[]),
+                Some("rtk phpunit tests/".into()),
+                "form: {cmd}"
+            );
+        }
+
+        // pest/pint/ecs/paratest use the simpler variant: ./ and vendor/bin only.
+        for cmd in ["pint", "vendor/bin/pint", "./vendor/bin/pint", "./pint"] {
+            assert_eq!(
+                rewrite_command_no_prefixes(cmd, &[]),
+                Some("rtk pint".into()),
+                "form: {cmd}"
+            );
+        }
+        // Forms the simpler variant intentionally does not accept (no php
+        // wrapper, no plain bin/) — must not rewrite rather than misfire.
+        assert_eq!(
+            rewrite_command_no_prefixes("php vendor/bin/pint", &[]),
+            None
+        );
+        assert_eq!(rewrite_command_no_prefixes("bin/pint", &[]), None);
     }
 
     #[test]
