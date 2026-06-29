@@ -815,7 +815,29 @@ fn rewrite_segment_inner(
             }
             rtk_equivalent
         }
-        _ => return None,
+        // No RULES match: consult the TOML registry so the hook also rewrites
+        // TOML-covered commands (e.g. `jj log` → `rtk jj log`). (#2179)
+        Classification::Unsupported { .. } => {
+            if crate::core::toml_filter::toml_disabled() {
+                return None;
+            }
+            // Match on the basename, matching run_fallback's lookup, so exclusion
+            // and filter matching agree for absolute-path invocations.
+            let normalized = strip_absolute_path(cmd_part.trim());
+            if is_excluded(&normalized, excluded) {
+                return None;
+            }
+            let base = normalized.split_whitespace().next().unwrap_or("");
+            // Skip names Clap would route to its own subcommand (bypasses TOML).
+            if crate::core::toml_filter::is_rtk_reserved_command(base) {
+                return None;
+            }
+            if crate::core::toml_filter::find_matching_filter(&normalized).is_some() {
+                return Some(format!("rtk {}{}", cmd_part, redirect_suffix));
+            }
+            return None;
+        }
+        Classification::Ignored => return None,
     };
 
     // Find the matching rule (rtk_cmd values are unique across all rules)
@@ -1351,6 +1373,99 @@ mod tests {
     #[test]
     fn test_rewrite_ignored_cd() {
         assert_eq!(rewrite_command_no_prefixes("cd /tmp", &[]), None);
+    }
+
+    // --- TOML-filter-covered commands wired into the hook (#2179) ---
+    // These commands have a built-in TOML filter (src/filters/<name>.toml) but
+    // no `RULES` row, so they exercise the Unsupported→TOML bridge. The hook
+    // rewrites them to `rtk <cmd>`, which re-enters via run_fallback → TOML tier.
+
+    #[test]
+    fn test_rewrite_toml_orphan_jj() {
+        assert_eq!(
+            rewrite_command_no_prefixes("jj log", &[]),
+            Some("rtk jj log".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_toml_orphan_jq() {
+        assert_eq!(
+            rewrite_command_no_prefixes("jq .", &[]),
+            Some("rtk jq .".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_toml_orphan_just() {
+        assert_eq!(
+            rewrite_command_no_prefixes("just build", &[]),
+            Some("rtk just build".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_toml_absolute_path() {
+        // Matched by basename (jj), but the emitted command keeps the explicit
+        // path; run_fallback re-basenames it back to `jj` to match the filter.
+        assert_eq!(
+            rewrite_command_no_prefixes("/usr/bin/jj log", &[]),
+            Some("rtk /usr/bin/jj log".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_toml_redirect_suffix_preserved() {
+        assert_eq!(
+            rewrite_command_no_prefixes("jj log 2>&1", &[]),
+            Some("rtk jj log 2>&1".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_toml_in_pipe_left_only() {
+        assert_eq!(
+            rewrite_command_no_prefixes("jj log | head", &[]),
+            Some("rtk jj log | head".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_toml_compound() {
+        assert_eq!(
+            rewrite_command_no_prefixes("jj diff && jq .", &[]),
+            Some("rtk jj diff && rtk jq .".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_toml_env_prefix() {
+        assert_eq!(
+            rewrite_command_no_prefixes("FOO=bar jj log", &[]),
+            Some("FOO=bar rtk jj log".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_toml_respects_exclude() {
+        let excluded = vec!["jj".to_string()];
+        assert_eq!(rewrite_command_no_prefixes("jj log", &excluded), None);
+    }
+
+    #[test]
+    fn test_rewrite_toml_exclude_matches_absolute_path() {
+        // Excluding "jj" must also exclude /usr/bin/jj (matched on the basename).
+        let excluded = vec!["jj".to_string()];
+        assert_eq!(
+            rewrite_command_no_prefixes("/usr/bin/jj log", &excluded),
+            None
+        );
+    }
+
+    #[test]
+    fn test_rewrite_toml_unknown_command_still_none() {
+        // No RULES row and no TOML filter → passthrough (None).
+        assert_eq!(rewrite_command_no_prefixes("frobnicate xyz", &[]), None);
     }
 
     #[test]

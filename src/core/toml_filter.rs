@@ -22,7 +22,7 @@
 ///   6. head/tail_lines      — keep first/last N lines
 ///   7. max_lines            — absolute line cap
 ///   8. on_empty             — message if result is empty
-use super::constants::{FILTERS_TOML, RTK_DATA_DIR};
+use super::constants::{FILTERS_TOML, RTK_DATA_DIR, RTK_META_COMMANDS};
 use lazy_static::lazy_static;
 use regex::{Regex, RegexSet};
 use serde::Deserialize;
@@ -314,6 +314,12 @@ const RUST_HANDLED_COMMANDS: &[&str] = &[
     "learn",
 ];
 
+/// True if `rtk <name>` is consumed by Clap itself (a Rust-handled command or
+/// meta-command). The hook's collision guard: it must not rewrite such a name.
+pub fn is_rtk_reserved_command(name: &str) -> bool {
+    RUST_HANDLED_COMMANDS.contains(&name) || RTK_META_COMMANDS.contains(&name)
+}
+
 fn compile_filter(name: String, def: TomlFilterDef) -> Result<CompiledFilter, String> {
     // Mutual exclusion: strip and keep cannot both be set
     if !def.strip_lines_matching.is_empty() && !def.keep_lines_matching.is_empty() {
@@ -410,6 +416,12 @@ lazy_static! {
     static ref REGISTRY: TomlFilterRegistry = TomlFilterRegistry::load();
 }
 
+/// True when the TOML engine is disabled via `RTK_NO_TOML=1`. Single source for
+/// the toggle, shared by the direct path (run_fallback) and the hook bridge.
+pub fn toml_disabled() -> bool {
+    std::env::var("RTK_NO_TOML").ok().as_deref() == Some("1")
+}
+
 // ---------------------------------------------------------------------------
 // Public API — pure functions (testable without global state)
 // ---------------------------------------------------------------------------
@@ -435,6 +447,34 @@ pub fn find_filter_in<'a>(
 ///   7. max_lines            — absolute line cap
 ///   8. on_empty             — message if result is empty
 pub fn apply_filter(filter: &CompiledFilter, stdout: &str) -> String {
+    apply_filter_with_info(filter, stdout).0
+}
+
+/// Describes what content [`apply_filter_with_info`] dropped, so the caller can
+/// attach the right reversibility (tee) hint.
+#[derive(Debug, PartialEq)]
+pub enum Lossiness {
+    /// Nothing was dropped, or only intended noise removal (strip/keep/on_empty)
+    /// — no recovery hint needed.
+    None,
+    /// A contiguous tail was dropped (head-only or pure max_lines cap).
+    /// `tee_payload` is the content to write to the tee file; `tail_offset` is
+    /// the 1-based first dropped line within it, so
+    /// `tail -n +{tail_offset} <file>` reproduces exactly the omitted lines.
+    Tail {
+        tee_payload: String,
+        tail_offset: usize,
+    },
+    /// Non-contiguous or whole-blob loss (head+tail middle drop, tail-only
+    /// prefix drop, per-line `truncate_lines_at`, or `match_output`
+    /// replacement). Recoverable only via the full output.
+    Whole,
+}
+
+/// Like [`apply_filter`], but also reports what content was dropped (see
+/// [`Lossiness`]) so callers can emit a reversibility hint pointing at the raw
+/// output. `apply_filter` is the pure-string wrapper over this.
+pub fn apply_filter_with_info(filter: &CompiledFilter, stdout: &str) -> (String, Lossiness) {
     let mut lines: Vec<String> = stdout.lines().map(String::from).collect();
 
     // 1. strip_ansi
@@ -472,7 +512,7 @@ pub fn apply_filter(filter: &CompiledFilter, stdout: &str) -> String {
                         continue; // errors/warnings present — skip this rule
                     }
                 }
-                return rule.message.clone();
+                return (rule.message.clone(), Lossiness::Whole);
             }
         }
     }
@@ -485,41 +525,63 @@ pub fn apply_filter(filter: &CompiledFilter, stdout: &str) -> String {
     }
 
     // 5. truncate_lines_at — uses utils::truncate (unicode-safe)
+    let mut intra_line_loss = false;
     if let Some(max_chars) = filter.truncate_lines_at {
         lines = lines
             .into_iter()
-            .map(|l| crate::core::utils::truncate(&l, max_chars))
+            .map(|line| {
+                let truncated = crate::core::utils::truncate(&line, max_chars);
+                if truncated != line {
+                    intra_line_loss = true;
+                }
+                truncated
+            })
             .collect();
     }
 
+    // A tail hint is only possible for a contiguous tail-drop (head-only or pure
+    // max_lines cap). Snapshot the pre-cut content only in that case so the hint
+    // can point `tail -n +N` at it — and avoid cloning on every other path.
+    let snapshot_for_tail = !intra_line_loss
+        && filter.tail_lines.is_none()
+        && (filter.head_lines.is_some() || filter.max_lines.is_some());
+    let pre_cut = snapshot_for_tail.then(|| lines.clone());
+
     // 6. head + tail
     let total = lines.len();
+    let mut noncontiguous_drop = false;
+    let mut head_cut: Option<usize> = None;
     if let (Some(head), Some(tail)) = (filter.head_lines, filter.tail_lines) {
         if total > head + tail {
             let mut result = lines[..head].to_vec();
             result.push(format!("... ({} lines omitted)", total - head - tail));
             result.extend_from_slice(&lines[total - tail..]);
             lines = result;
+            noncontiguous_drop = true;
         }
     } else if let Some(head) = filter.head_lines {
         if total > head {
             lines.truncate(head);
             lines.push(format!("... ({} lines omitted)", total - head));
+            head_cut = Some(head);
         }
     } else if let Some(tail) = filter.tail_lines {
         if total > tail {
             let omitted = total - tail;
             lines = lines[omitted..].to_vec();
             lines.insert(0, format!("... ({} lines omitted)", omitted));
+            noncontiguous_drop = true;
         }
     }
 
     // 7. max_lines — absolute cap applied after head/tail (includes omit messages)
+    let mut max_cut: Option<usize> = None;
     if let Some(max) = filter.max_lines {
         if lines.len() > max {
-            let truncated = lines.len() - max;
+            let dropped = lines.len() - max;
             lines.truncate(max);
-            lines.push(format!("... ({} lines truncated)", truncated));
+            lines.push(format!("... ({} lines truncated)", dropped));
+            max_cut = Some(max);
         }
     }
 
@@ -527,11 +589,32 @@ pub fn apply_filter(filter: &CompiledFilter, stdout: &str) -> String {
     let result = lines.join("\n");
     if result.trim().is_empty() {
         if let Some(ref msg) = filter.on_empty {
-            return msg.clone();
+            return (msg.clone(), Lossiness::None);
         }
     }
 
-    result
+    // A head-only or pure max_lines cap drops a contiguous tail (recoverable via a
+    // `tail -n +N` hint over the snapshot); every other loss needs the full output.
+    let loss = if let Some(snapshot) = pre_cut {
+        match (head_cut, max_cut) {
+            (Some(_), Some(_)) => Lossiness::Whole,
+            (Some(head), None) => Lossiness::Tail {
+                tee_payload: snapshot.join("\n"),
+                tail_offset: head + 1,
+            },
+            (None, Some(max)) => Lossiness::Tail {
+                tee_payload: snapshot.join("\n"),
+                tail_offset: max + 1,
+            },
+            (None, None) => Lossiness::None,
+        }
+    } else if noncontiguous_drop || intra_line_loss {
+        Lossiness::Whole
+    } else {
+        Lossiness::None
+    };
+
+    (result, loss)
 }
 
 // ---------------------------------------------------------------------------
@@ -704,6 +787,119 @@ mod tests {
             .into_iter()
             .next()
             .expect("expected at least one filter")
+    }
+
+    #[test]
+    fn test_is_rtk_reserved_command() {
+        assert!(is_rtk_reserved_command("git"));
+        assert!(is_rtk_reserved_command("cargo"));
+        assert!(is_rtk_reserved_command("json"));
+        assert!(is_rtk_reserved_command("rewrite"));
+        assert!(!is_rtk_reserved_command("jj"));
+        assert!(!is_rtk_reserved_command("jq"));
+        assert!(!is_rtk_reserved_command("just"));
+        assert!(!is_rtk_reserved_command("frobnicate"));
+    }
+
+    fn loss_of(toml: &str, input: &str) -> Lossiness {
+        apply_filter_with_info(&first_filter(toml), input).1
+    }
+
+    #[test]
+    fn test_loss_head_lines_is_tail() {
+        let toml = "schema_version = 1\n[filters.f]\nmatch_command = \"^cmd\"\nhead_lines = 2\n";
+        let (out, loss) = apply_filter_with_info(&first_filter(toml), "a\nb\nc\nd\ne");
+        assert!(out.starts_with("a\nb\n"));
+        match loss {
+            Lossiness::Tail {
+                tee_payload,
+                tail_offset,
+            } => {
+                assert_eq!(tail_offset, 3);
+                let recovered: Vec<&str> = tee_payload.lines().skip(tail_offset - 1).collect();
+                assert_eq!(recovered, vec!["c", "d", "e"]);
+            }
+            other => panic!("expected Tail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_loss_max_lines_is_tail() {
+        let toml = "schema_version = 1\n[filters.f]\nmatch_command = \"^cmd\"\nmax_lines = 2\n";
+        match loss_of(toml, "a\nb\nc\nd\ne") {
+            Lossiness::Tail {
+                tee_payload,
+                tail_offset,
+            } => {
+                assert_eq!(tail_offset, 3);
+                let recovered: Vec<&str> = tee_payload.lines().skip(tail_offset - 1).collect();
+                assert_eq!(recovered, vec!["c", "d", "e"]);
+            }
+            other => panic!("expected Tail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_loss_tail_lines_is_whole() {
+        let toml = "schema_version = 1\n[filters.f]\nmatch_command = \"^cmd\"\ntail_lines = 2\n";
+        assert_eq!(loss_of(toml, "a\nb\nc\nd\ne"), Lossiness::Whole);
+    }
+
+    #[test]
+    fn test_loss_head_then_max_is_whole() {
+        let toml = "schema_version = 1\n[filters.f]\nmatch_command = \"^cmd\"\nhead_lines = 2\nmax_lines = 2\n";
+        assert_eq!(loss_of(toml, "a\nb\nc\nd\ne"), Lossiness::Whole);
+    }
+
+    #[test]
+    fn test_loss_head_plus_tail_is_whole() {
+        let toml = "schema_version = 1\n[filters.f]\nmatch_command = \"^cmd\"\nhead_lines = 1\ntail_lines = 1\n";
+        assert_eq!(loss_of(toml, "a\nb\nc\nd\ne"), Lossiness::Whole);
+    }
+
+    #[test]
+    fn test_loss_truncate_lines_at_is_whole() {
+        let toml =
+            "schema_version = 1\n[filters.f]\nmatch_command = \"^cmd\"\ntruncate_lines_at = 3\n";
+        assert_eq!(loss_of(toml, "abcdefgh\nshort"), Lossiness::Whole);
+    }
+
+    #[test]
+    fn test_loss_match_output_is_whole() {
+        let toml = "schema_version = 1\n[filters.f]\nmatch_command = \"^cmd\"\n[[filters.f.match_output]]\npattern = \"ok\"\nmessage = \"all good\"\n";
+        let (out, loss) = apply_filter_with_info(&first_filter(toml), "everything ok here\nmore");
+        assert_eq!(out, "all good");
+        assert_eq!(loss, Lossiness::Whole);
+    }
+
+    #[test]
+    fn test_loss_strip_only_is_none() {
+        let toml = "schema_version = 1\n[filters.f]\nmatch_command = \"^cmd\"\nstrip_lines_matching = [\"^noise\"]\n";
+        let (out, loss) = apply_filter_with_info(&first_filter(toml), "keep\nnoise line\nkeep2");
+        assert_eq!(out, "keep\nkeep2");
+        assert_eq!(loss, Lossiness::None);
+    }
+
+    #[test]
+    fn test_loss_on_empty_is_none() {
+        let toml = "schema_version = 1\n[filters.f]\nmatch_command = \"^cmd\"\nstrip_lines_matching = [\".\"]\non_empty = \"nothing\"\n";
+        let (out, loss) = apply_filter_with_info(&first_filter(toml), "a\nb\nc");
+        assert_eq!(out, "nothing");
+        assert_eq!(loss, Lossiness::None);
+    }
+
+    #[test]
+    fn test_loss_no_truncation_is_none() {
+        let toml = "schema_version = 1\n[filters.f]\nmatch_command = \"^cmd\"\nhead_lines = 10\n";
+        assert_eq!(loss_of(toml, "a\nb\nc"), Lossiness::None);
+    }
+
+    #[test]
+    fn test_apply_filter_wrapper_matches_with_info() {
+        let toml = "schema_version = 1\n[filters.f]\nmatch_command = \"^cmd\"\nhead_lines = 2\n";
+        let f = first_filter(toml);
+        let input = "a\nb\nc\nd";
+        assert_eq!(apply_filter(&f, input), apply_filter_with_info(&f, input).0);
     }
 
     // --- Pipeline primitives (existing) ---
