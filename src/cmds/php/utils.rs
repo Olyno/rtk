@@ -43,7 +43,11 @@ pub enum PhpTestRunner {
 }
 
 pub fn detect_php_test_runner() -> PhpTestRunner {
-    if composer_tool_exists("pest") || Path::new("pest.php").exists() {
+    // Pest's canonical marker is the `vendor/bin/pest` binary (composer dep).
+    // There is no root `pest.php` file — Pest's bootstrap lives at `tests/Pest.php`
+    // — so a root-level `pest.php` check both never matches Pest and false-positives
+    // on unrelated utility files in PHPUnit-only projects.
+    if composer_tool_exists("pest") {
         return PhpTestRunner::Pest;
     }
 
