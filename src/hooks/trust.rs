@@ -215,6 +215,24 @@ pub fn gated_filter_paths_labeled() -> Vec<(&'static str, PathBuf)> {
     paths
 }
 
+pub fn untrusted_active_filter_count() -> usize {
+    gated_filter_paths_labeled()
+        .into_iter()
+        .filter(|(_, path)| path.exists())
+        .filter(|(_, path)| {
+            !matches!(
+                check_trust(path).unwrap_or(TrustStatus::Untrusted),
+                TrustStatus::Trusted | TrustStatus::EnvOverride
+            )
+        })
+        .map(|(_, path)| {
+            std::fs::read_to_string(&path)
+                .map(|c| crate::core::toml_filter::active_filter_summaries(&c).len())
+                .unwrap_or(0)
+        })
+        .sum()
+}
+
 // ---------------------------------------------------------------------------
 // CLI commands
 // ---------------------------------------------------------------------------
