@@ -217,22 +217,8 @@ impl TomlFilterRegistry {
                     }
                 }
             }
-            crate::hooks::trust::TrustStatus::Untrusted => {
-                if path_defines_filters(path) {
-                    eprintln!(
-                        "[rtk] WARNING: untrusted filters {} — NOT applied. Run `rtk trust` to review and enable.",
-                        label
-                    );
-                }
-            }
-            crate::hooks::trust::TrustStatus::ContentChanged { .. } => {
-                if path_defines_filters(path) {
-                    eprintln!(
-                        "[rtk] WARNING: {} changed since trusted — NOT applied. Run `rtk trust` to re-review.",
-                        label
-                    );
-                }
-            }
+            crate::hooks::trust::TrustStatus::Untrusted
+            | crate::hooks::trust::TrustStatus::ContentChanged { .. } => {}
         }
     }
 
@@ -426,12 +412,6 @@ pub fn active_filter_summaries(content: &str) -> Vec<(String, String)> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-fn path_defines_filters(path: &std::path::Path) -> bool {
-    std::fs::read_to_string(path)
-        .map(|c| !active_filter_summaries(&c).is_empty())
-        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------

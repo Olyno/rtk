@@ -138,17 +138,11 @@ See [`src/filters/README.md`](https://github.com/rtk-ai/rtk/blob/master/src/filt
 
 ### Trusting custom filters
 
-Because a filter can rewrite what your AI assistant sees, custom filter files are **not applied until you trust them**. When RTK finds an untrusted (or edited) filter file, it skips it and warns:
-
-```
-[rtk] WARNING: untrusted filters ~/.config/rtk/filters.toml — NOT applied. Run `rtk trust` to review and enable.
-```
-
-Review and enable them:
+Because a filter can rewrite what your AI assistant sees, custom filter files are **not applied until you trust them**. An untrusted (or edited) filter file is skipped silently on the command path. You review and manage trust with explicit commands:
 
 ```bash
-rtk trust      # prints each filter's rules, then enables them
+rtk trust      # shows each filter and asks to confirm (--yes to skip the prompt)
 rtk untrust    # revokes trust
 ```
 
-Trust is tied to the file's contents (SHA-256), so editing a trusted file requires re-running `rtk trust`. `rtk init` also detects existing filters and lets you enable them — interactively, or non-interactively with `--trust-filters` / `--no-trust-filters`.
+`rtk init` also detects existing filters and lets you enable them — interactively, or non-interactively with `--trust-filters` / `--no-trust-filters`. Trust is tied to the file's contents (SHA-256), so editing a trusted file requires re-running `rtk trust`.
