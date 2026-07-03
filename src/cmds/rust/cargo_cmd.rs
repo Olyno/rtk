@@ -198,21 +198,21 @@ impl BlockHandler for CargoTestHandler {
     }
 
     fn format_summary(&self, _exit_code: i32, raw: &str) -> Option<String> {
-        if self.summary_lines.is_empty() && self.has_compile_errors {
-            let build_filtered = filter_cargo_build(raw);
-            if build_filtered.starts_with("cargo build:") {
-                return Some(format!(
-                    "{}\n",
-                    build_filtered.replacen("cargo build:", "cargo test:", 1)
-                ));
+        if self.summary_lines.is_empty() {
+            let json = extract_json_diagnostics(raw);
+            if self.has_compile_errors || !json.errors.is_empty() {
+                let build_filtered = filter_cargo_build_labeled(raw, "test");
+                if !build_filtered.is_empty() {
+                    return Some(format!("{}\n", build_filtered));
+                }
+                // Fallback: last 5 meaningful lines
+                let meaningful: Vec<&str> = raw
+                    .lines()
+                    .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with("Compiling"))
+                    .collect();
+                let last5: Vec<&str> = meaningful.iter().rev().take(5).rev().copied().collect();
+                return Some(format!("{}\n", last5.join("\n")));
             }
-            // Fallback: last 5 meaningful lines
-            let meaningful: Vec<&str> = raw
-                .lines()
-                .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with("Compiling"))
-                .collect();
-            let last5: Vec<&str> = meaningful.iter().rev().take(5).rev().copied().collect();
-            return Some(format!("{}\n", last5.join("\n")));
         }
 
         // No failures emitted — aggregate pass results
@@ -1170,15 +1170,17 @@ pub(crate) fn filter_cargo_test(output: &str) -> String {
     }
 
     if result.trim().is_empty() {
-        let has_compile_errors = output.lines().any(|line| {
-            let trimmed = line.trim_start();
-            trimmed.starts_with("error[") || trimmed.starts_with("error:")
-        });
+        let json = extract_json_diagnostics(output);
+        let has_compile_errors = !json.errors.is_empty()
+            || output.lines().any(|line| {
+                let trimmed = line.trim_start();
+                trimmed.starts_with("error[") || trimmed.starts_with("error:")
+            });
 
         if has_compile_errors {
-            let build_filtered = filter_cargo_build(output);
-            if build_filtered.starts_with("cargo build:") {
-                return build_filtered.replacen("cargo build:", "cargo test:", 1);
+            let build_filtered = filter_cargo_build_labeled(output, "test");
+            if !build_filtered.is_empty() {
+                return build_filtered;
             }
         }
 
@@ -2628,5 +2630,22 @@ error: could not compile `rtk` (test "repro_compile_fail") due to 1 previous err
         let result = run_block_filter(&mut f, input, 1);
         assert!(result.contains("cargo test:"), "got: {}", result);
         assert!(result.contains("1 errors"), "got: {}", result);
+    }
+
+    #[test]
+    fn test_cargo_test_stream_json_compile_error() {
+        let input = concat!(
+            "   Compiling v_cargo v0.1.0 (/tmp/v_cargo)\n",
+            r#"{"reason":"compiler-message","package_id":"v_cargo 0.1.0","message":{"code":{"code":"E0425"},"level":"error","message":"cannot find value `missing_symbol` in this scope","rendered":"error[E0425]: cannot find value `missing_symbol` in this scope\n --> tests/repro.rs:3:13"}}"#,
+            "\n",
+            r#"{"reason":"build-finished","success":false}"#,
+            "\n",
+        );
+        let mut f = BlockStreamFilter::new(CargoTestHandler::new());
+        let result = run_block_filter(&mut f, input, 101);
+        assert!(!result.trim().is_empty(), "json compile error must not be silent");
+        assert!(result.contains("cargo test:"), "got: {}", result);
+        assert!(result.contains("1 errors"), "got: {}", result);
+        assert!(result.contains("E0425"), "diagnostic must be surfaced: {}", result);
     }
 }
