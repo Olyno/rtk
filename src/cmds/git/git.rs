@@ -2205,26 +2205,26 @@ mod tests {
     fn test_compress_stat_summary_variants() {
         assert_eq!(
             compress_stat_summary("4 files changed, 60 insertions(+), 313 deletions(-)"),
-            "4 changed, 60 +, 313 -"
+            "4 changed 60 + 313 -"
         );
         assert_eq!(
             compress_stat_summary("1 file changed, 1 insertion(+)"),
-            "1 changed, 1 +"
+            "1 changed 1 +"
         );
         assert_eq!(
             compress_stat_summary("1 file changed, 1 deletion(-)"),
-            "1 changed, 1 -"
+            "1 changed 1 -"
         );
         assert_eq!(
             compress_stat_summary("2 files changed, 4 insertions(+), 1 deletion(-)"),
-            "2 changed, 4 +, 1 -"
+            "2 changed 4 + 1 -"
         );
     }
 
     #[test]
     fn test_compact_stash_stat_compresses_summary() {
         let raw = " a.txt | 2 ++\n 1 file changed, 2 insertions(+)\n";
-        assert_eq!(compact_stash_stat(raw), "a.txt 2 +\n1 changed, 2 +");
+        assert_eq!(compact_stash_stat(raw), "a.txt 2 +\n1 changed 2 +");
     }
 
     #[test]
