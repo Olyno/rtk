@@ -351,9 +351,7 @@ fn run_test(args: &[String], verbose: u8) -> Result<i32> {
 
 fn run_clippy(args: &[String], verbose: u8) -> Result<i32> {
     if has_json_message_format(args) {
-        return run_cargo_filtered("clippy", args, verbose, |o| {
-            filter_cargo_build_labeled(o, "clippy")
-        });
+        return run_cargo_filtered("clippy", args, verbose, filter_cargo_clippy_json);
     }
     run_cargo_filtered("clippy", args, verbose, filter_cargo_clippy)
 }
@@ -1371,6 +1369,14 @@ fn filter_cargo_clippy(output: &str) -> String {
     result.trim().to_string()
 }
 
+fn filter_cargo_clippy_json(output: &str) -> String {
+    let json = extract_json_diagnostics(output);
+    if json.errors.is_empty() && json.warnings.is_empty() {
+        return "cargo clippy: No issues found".to_string();
+    }
+    filter_cargo_build_labeled(output, "clippy")
+}
+
 pub fn run_passthrough(args: &[OsString], verbose: u8) -> Result<i32> {
     crate::core::runner::run_passthrough("cargo", args, verbose)
 }
@@ -2369,6 +2375,32 @@ error: aborting due to 1 previous error
             "json clippy errors must not be swallowed: {}",
             result
         );
+    }
+
+    #[test]
+    fn test_filter_cargo_clippy_json_clean() {
+        let input = concat!(
+            "    Checking demo v0.1.0 (/tmp/demo)\n",
+            r#"{"reason":"compiler-artifact","package_id":"demo 0.1.0","target":{"name":"demo"}}"#,
+            "\n",
+            r#"{"reason":"build-finished","success":true}"#,
+            "\n",
+        );
+        assert_eq!(filter_cargo_clippy_json(input), "cargo clippy: No issues found");
+    }
+
+    #[test]
+    fn test_filter_cargo_clippy_json_warnings() {
+        let input = concat!(
+            "    Checking demo v0.1.0 (/tmp/demo)\n",
+            r#"{"reason":"compiler-message","message":{"level":"warning","message":"unused variable: `x`","rendered":"warning: unused variable: `x`\n --> src/main.rs:2:9"}}"#,
+            "\n",
+            r#"{"reason":"build-finished","success":true}"#,
+            "\n",
+        );
+        let result = filter_cargo_clippy_json(input);
+        assert!(result.contains("unused variable"), "got: {}", result);
+        assert!(result.contains("cargo clippy: 0 errors, 1 warnings"), "got: {}", result);
     }
 
     #[test]
