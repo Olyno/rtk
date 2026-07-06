@@ -22,7 +22,8 @@ struct IndexState {
 
 /// Build the index if needed (lazy + stale detection) and run a query closure.
 /// The closure receives a reference to the fresh index.
-pub fn with_index<F, T>(base_path: &Path, f: F) -> Result<Option<T>>
+/// When `verbose` is true, index build progress is emitted to stderr.
+pub fn with_index<F, T>(base_path: &Path, verbose: bool, f: F) -> Result<Option<T>>
 where
     F: FnOnce(&ProjectIndex) -> Option<T>,
 {
@@ -38,12 +39,16 @@ where
     if needs_build {
         let now = SystemTime::now();
         let mut idx = ProjectIndex::open(base_path)?;
-        eprintln!("rtk: building project index (one-time) ...");
+        if verbose {
+            eprintln!("rtk: building project index (one-time) ...");
+        }
         let (files, symbols) = idx.scan()?;
-        eprintln!(
-            "rtk: indexed {} files, {} symbols in {:?}",
-            files, symbols, base_path
-        );
+        if verbose {
+            eprintln!(
+                "rtk: indexed {} files, {} symbols in {:?}",
+                files, symbols, base_path
+            );
+        }
 
         INDEX.with(|cell| {
             *cell.borrow_mut() = Some(IndexState {

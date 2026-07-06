@@ -392,14 +392,17 @@ pub fn run(
     // Try index-aware lookup for simple symbol queries before falling back to
     // the real engine. This reduces token count for codebase exploration
     // queries like "rtk grep parseFile" → structured symbol results.
+    // Only when an explicit path is given; an empty path list means stdin.
     if engine == Engine::Grep
+        && !paths.is_empty()
         && (extra_args.is_empty()
             || (extra_args.len() == 1 && extra_args[0].starts_with('-')))
     {
-        let base_path = std::path::Path::new(if paths.is_empty() { "." } else { &paths[0] });
-        let index_result = super::index_aware::with_index(base_path, |idx| {
-            super::index_aware::query_code_index(idx, &patterns[0])
-        });
+        let base_path = std::path::Path::new(&paths[0]);
+        let index_result =
+            super::index_aware::with_index(base_path, verbose > 0, |idx| {
+                super::index_aware::query_code_index(idx, &patterns[0])
+            });
 
         match index_result {
             Ok(Some(results)) => {
