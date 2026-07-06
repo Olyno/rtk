@@ -1137,6 +1137,29 @@ mod tests {
     }
 
     #[test]
+    fn test_registry_covers_dart_and_flutter_subcommands() {
+        for (tool, subcmds) in [("dart", &["test", "analyze", "format"][..]), ("flutter", &["test", "analyze"][..])] {
+            for subcmd in subcmds {
+                let cmd = format!("{tool} {subcmd}");
+                match classify_command(&cmd) {
+                    Classification::Supported { .. } => {}
+                    other => panic!("{cmd} should be Supported, got {other:?}"),
+                }
+                let rewritten = rewrite_command_no_prefixes(&cmd, &[]);
+                assert!(
+                    rewritten.is_some(),
+                    "{cmd} should rewrite to rtk {tool}, got None"
+                );
+                assert_eq!(
+                    rewritten,
+                    Some(format!("rtk {tool} {subcmd}")),
+                    "{cmd} should rewrite to rtk {tool} {subcmd}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_classify_find_not_blocked_by_fi() {
         // Regression: "fi" in IGNORED_PREFIXES used to shadow "find" commands
         // because "find".starts_with("fi") is true. "fi" should only match exactly.
