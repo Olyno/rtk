@@ -261,7 +261,7 @@ fn unparsed_signal(stdout: &str) -> usize {
 /// rg is the fallback when grep is absent, rejects a flag, or `--type` is used.
 /// The search engine the agent actually invoked. RTK runs this binary verbatim
 /// and never substitutes one for the other.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Engine {
     Grep,
     Rg,
@@ -387,6 +387,46 @@ pub fn run(
 
     if verbose > 0 {
         eprintln!("grep: '{}' in {}", pattern_display, path_display);
+    }
+
+    // Try index-aware lookup for simple symbol queries before falling back to
+    // the real engine. This reduces token count for codebase exploration
+    // queries like "rtk grep parseFile" → structured symbol results.
+    // Only when an explicit path is given; an empty path list means stdin.
+    if engine == Engine::Grep
+        && !paths.is_empty()
+        && (extra_args.is_empty()
+            || (extra_args.len() == 1 && extra_args[0].starts_with('-')))
+    {
+        let base_path = std::path::Path::new(&paths[0]);
+        let index_result =
+            super::index_aware::with_index(base_path, verbose > 0, |idx| {
+                super::index_aware::query_code_index(idx, &patterns[0])
+            });
+
+        match index_result {
+            Ok(Some(results)) => {
+                let output = results.join("\n");
+                let msg = format!("{} symbols matching '{}'", results.len(), patterns[0]);
+                eprintln!("rtk: {} (via index)", msg);
+                println!("{}", output);
+                timer.track(
+                    &real_cmd,
+                    &format!("rtk {} (index)", engine.label()),
+                    &output,
+                    &output,
+                );
+                return Ok(0);
+            }
+            Err(e) => {
+                eprintln!(
+                    "rtk: index unavailable ({}), falling back to {}",
+                    e,
+                    engine.label()
+                );
+            }
+            _ => {}
+        }
     }
 
     // format/shape flags (-c/-l/-o/...): already-minimal native output, passthrough.
