@@ -223,6 +223,16 @@ pub struct MonthStats {
 /// Type alias for command statistics tuple: (command, count, saved_tokens, avg_savings_pct, avg_time_ms)
 type CommandStats = (String, usize, usize, f64, u64);
 
+/// Potential command record for display.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct PotentialRecord {
+    pub command: String,
+    pub exec_count: usize,
+    pub total_input_tokens: usize,
+    pub total_time_ms: u64,
+}
+
 impl Tracker {
     /// Create a new tracker instance.
     ///
@@ -323,6 +333,25 @@ impl Tracker {
             [],
         )?;
 
+        // Potential commands: unregistered commands executed by users,
+        // tracked to identify high-value filter candidates.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS potential_commands (
+                id INTEGER PRIMARY KEY,
+                command TEXT NOT NULL UNIQUE,
+                exec_count INTEGER NOT NULL DEFAULT 1,
+                total_input_tokens INTEGER NOT NULL DEFAULT 0,
+                last_seen TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        // Migration: add total_time_ms column to potential_commands
+        let _ = conn.execute(
+            "ALTER TABLE potential_commands ADD COLUMN total_time_ms INTEGER DEFAULT 0",
+            [],
+        );
+
         Ok(Self { conn })
     }
 
@@ -372,6 +401,16 @@ impl Tracker {
         )?;
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_pf_timestamp ON parse_failures(timestamp)",
+            [],
+        )?;
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS potential_commands (
+                id INTEGER PRIMARY KEY,
+                command TEXT NOT NULL UNIQUE,
+                exec_count INTEGER NOT NULL DEFAULT 1,
+                total_input_tokens INTEGER NOT NULL DEFAULT 0,
+                last_seen TEXT NOT NULL
+            )",
             [],
         )?;
         Ok(())
@@ -446,6 +485,10 @@ impl Tracker {
             "DELETE FROM parse_failures WHERE timestamp < ?1",
             params![cutoff.to_rfc3339()],
         )?;
+        self.conn.execute(
+            "DELETE FROM potential_commands WHERE last_seen < ?1",
+            params![cutoff.to_rfc3339()],
+        )?;
         Ok(())
     }
 
@@ -456,6 +499,7 @@ impl Tracker {
                 "BEGIN;
                  DELETE FROM commands;
                  DELETE FROM parse_failures;
+                 DELETE FROM potential_commands;
                  COMMIT;",
             )
             .context("Failed to reset tracking database")?;
@@ -481,6 +525,64 @@ impl Tracker {
         )?;
         self.cleanup_old()?;
         Ok(())
+    }
+
+    /// Record a potential command (unregistered, executed via fallback).
+    ///
+    /// Tracks how many times each unknown command is executed and how many
+    /// input tokens it would consume, to identify high-value filter candidates.
+    pub fn record_potential(
+        &self,
+        command: &str,
+        input_tokens: usize,
+        elapsed_ms: u64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO potential_commands (command, exec_count, total_input_tokens, total_time_ms, last_seen)
+             VALUES (?1, 1, ?2, ?3, ?4)
+             ON CONFLICT(command) DO UPDATE SET
+                exec_count = exec_count + 1,
+                total_input_tokens = total_input_tokens + ?2,
+                total_time_ms = total_time_ms + ?3,
+                last_seen = ?4",
+            params![command, input_tokens as i64, elapsed_ms as i64, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// Get potential commands summary.
+    ///
+    /// Returns commands executed more than `min_count` times, sorted by
+    /// total input tokens descending. Also cleans up commands that now have
+    /// a registered RTK filter (appear in the `commands` table).
+    pub fn get_potential_summary(&self, min_count: usize) -> Result<Vec<PotentialRecord>> {
+        // Remove potential entries that now have an RTK filter
+        let _ = self.conn.execute(
+            "DELETE FROM potential_commands WHERE command IN (
+                SELECT DISTINCT rtk_cmd FROM commands
+             )",
+            [],
+        );
+        let mut stmt = self.conn.prepare(
+            "SELECT command, exec_count, total_input_tokens, total_time_ms
+             FROM potential_commands
+             WHERE exec_count > ?1
+             ORDER BY total_input_tokens DESC
+             LIMIT 30",
+        )?;
+        let rows = stmt.query_map(params![min_count as i64], |row| {
+            Ok(PotentialRecord {
+                command: row.get(0)?,
+                exec_count: row.get::<_, i64>(1)? as usize,
+                total_input_tokens: row.get::<_, i64>(2)? as usize,
+                total_time_ms: row.get::<_, i64>(3)? as u64,
+            })
+        })?;
+        let mut records = Vec::new();
+        for row in rows {
+            records.push(row?);
+        }
+        Ok(records)
     }
 
     /// Get parse failure summary for `rtk gain --failures`.
@@ -1262,6 +1364,13 @@ pub fn record_parse_failure_silent(raw_command: &str, error_message: &str, succe
     }
 }
 
+/// Record a potential command silently (best-effort, log-only).
+pub fn record_potential_silent(command: &str, input_tokens: usize, elapsed_ms: u64) {
+    if let Ok(tracker) = Tracker::new() {
+        let _ = tracker.record_potential(command, input_tokens, elapsed_ms);
+    }
+}
+
 /// Estimate token count from text using ~4 chars = 1 token heuristic.
 ///
 /// This is a fast approximation suitable for tracking purposes.
@@ -1282,8 +1391,9 @@ pub fn record_parse_failure_silent(raw_command: &str, error_message: &str, succe
 /// assert_eq!(estimate_tokens("hello world"), 3); // 11 chars = ceil(2.75) = 3
 /// ```
 pub fn estimate_tokens(text: &str) -> usize {
-    // ~4 chars per token on average
-    (text.len() as f64 / 4.0).ceil() as usize
+    // Use tiktoken-rs o200k_base when available (accurate for GPT-4o/Claude).
+    // Falls back to chars/4 if the model file can't be loaded.
+    crate::core::tokenizer::estimate_tokens(text)
 }
 
 /// Helper struct for timing command execution
@@ -1329,12 +1439,18 @@ impl TimedExecution {
         }
     }
 
+    /// Elapsed time in milliseconds since `start()`.
+    pub fn elapsed_ms(&self) -> u64 {
+        self.start.elapsed().as_millis() as u64
+    }
+
     /// Track the command with elapsed time and token counts.
     ///
     /// Records the command execution with:
     /// - Elapsed time since [`start`](Self::start)
     /// - Token counts estimated from input/output strings
     /// - Calculated savings metrics
+    /// - Stores filtered output in session cache for future reuse
     ///
     /// # Arguments
     ///
@@ -1367,6 +1483,58 @@ impl TimedExecution {
                 elapsed_ms,
             );
         }
+
+        // Store in session cache so repeated identical commands skip filtering.
+        let key = crate::core::cache::cache_key(original_cmd, input, "");
+        crate::core::cache::store_cached(&key, input, output);
+
+        // Record for bounce detection — tracks if user re-runs raw after filtered.
+        crate::core::bounce::record_filtered(original_cmd);
+
+        // Archive large raw output so the full content is never lost, even if
+        // the filtered version is aggressively compressed.
+        if let Some(archive_id) = crate::core::archive::archive(original_cmd, input, output) {
+            let hint = crate::core::archive::archive_hint(&archive_id, input.len(), output.len());
+            eprintln!("{hint}");
+        }
+    }
+
+    /// Check the session cache for a previously filtered version of this command.
+    ///
+    /// Returns `Some(cached_output_with_footer)` if the same command produced
+    /// identical raw output within the cache TTL (5 min by default). Returns
+    /// `None` if there's no valid cached entry — the caller should proceed
+    /// with normal filtering.
+    ///
+    /// The returned string includes a `[rtk: cached]` footer so the user knows
+    /// the output was served from cache.
+    ///
+    /// # Arguments
+    ///
+    /// - `original_cmd`: The command that was executed (e.g., "git status")
+    /// - `raw_output`: The raw (unfiltered) stdout+stderr
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use rtk::tracking::TimedExecution;
+    ///
+    /// let timer = TimedExecution::start();
+    /// let raw = "output...";
+    /// if let Some(cached) = timer.check_cache("git status", raw) {
+    ///     println!("{cached}");
+    ///     return Ok(0);
+    /// }
+    /// // ... filter normally ...
+    /// ```
+    pub fn check_cache(&self, original_cmd: &str, raw_output: &str) -> Option<String> {
+        let key = crate::core::cache::cache_key(original_cmd, raw_output, "");
+        let entry = crate::core::cache::load_cached(&key)?;
+        let saved = entry.raw_tokens.saturating_sub(entry.filtered_tokens);
+        Some(format!(
+            "{}\n[rtk: cached, -{} tokens]",
+            entry.filtered, saved
+        ))
     }
 
     /// Track passthrough commands (timing-only, no token counting).
@@ -1394,6 +1562,15 @@ impl TimedExecution {
         // input_tokens=0, output_tokens=0 won't dilute savings statistics
         if let Ok(tracker) = Tracker::new() {
             let _ = tracker.record(original_cmd, rtk_cmd, 0, 0, elapsed_ms);
+        }
+
+        // Check if this raw execution is a bounce of a recent filtered version.
+        if crate::core::bounce::check_bounce(original_cmd) {
+            eprintln!(
+                "rtk: bounce detected — raw '{}' was run after filtered version.\n\
+                 Consider adding '-v' next time or adjusting the filter level.",
+                original_cmd
+            );
         }
     }
 }
@@ -1423,14 +1600,18 @@ pub fn args_display(args: &[OsString]) -> String {
 mod tests {
     use super::*;
 
-    // 1. estimate_tokens — verify ~4 chars/token ratio
+    // 1. estimate_tokens — verify it returns sensible counts
     #[test]
     fn test_estimate_tokens() {
         assert_eq!(estimate_tokens(""), 0);
-        assert_eq!(estimate_tokens("abcd"), 1); // 4 chars = 1 token
-        assert_eq!(estimate_tokens("abcde"), 2); // 5 chars = ceil(1.25) = 2
-        assert_eq!(estimate_tokens("a"), 1); // 1 char = ceil(0.25) = 1
-        assert_eq!(estimate_tokens("12345678"), 2); // 8 chars = 2 tokens
+        assert!(estimate_tokens("abcd") > 0);
+        assert!(estimate_tokens("abcde") > 0);
+        assert!(estimate_tokens("a") > 0);
+        assert!(estimate_tokens("12345678") > 0);
+        // Longer text should produce more tokens than shorter
+        let short = estimate_tokens("hi");
+        let long = estimate_tokens("this is a much longer piece of text for testing");
+        assert!(long > short);
     }
 
     // 2. args_display — format OsString vec
