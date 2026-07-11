@@ -48,8 +48,20 @@ pub trait TokenFormatter {
 
 impl TokenFormatter for TestResult {
     fn format_compact(&self) -> String {
-        // Always surface skipped/pending tests — hiding them lets coverage gaps
-        // (test.skip / it.skip / xfail) accumulate invisibly.
+        // All-green: ultra-compact single line
+        if self.failed == 0 {
+            let dur = self
+                .duration_ms
+                .map(|ms| format!(" ({:.1}s)", ms as f64 / 1000.0))
+                .unwrap_or_default();
+            let mut summary = format!("✓ {} passed{}", self.passed, dur);
+            // Always surface skipped/pending tests — hiding them lets coverage gaps
+            // (test.skip / it.skip / xfail) accumulate invisibly.
+            if self.skipped > 0 {
+                summary.push_str(&format!(" skipped ({})", self.skipped));
+            }
+            return summary;
+        }
         let mut summary = format!("PASS ({}) FAIL ({})", self.passed, self.failed);
         if self.skipped > 0 {
             summary.push_str(&format!(" skipped ({})", self.skipped));

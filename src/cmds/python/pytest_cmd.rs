@@ -141,6 +141,7 @@ pub(crate) fn filter_pytest_output(output: &str) -> String {
                 if trimmed.starts_with("FAILED") || trimmed.starts_with("ERROR") {
                     failures.push(trimmed.to_string());
                 } else if trimmed.starts_with("XFAIL") || trimmed.starts_with("XPASS") {
+                    // `-rxX` adds these: "XFAIL path::test - reason" / "XPASS path::test - reason"
                     xfail_lines.push(trimmed.to_string());
                 }
             }

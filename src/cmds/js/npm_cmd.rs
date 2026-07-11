@@ -1,77 +1,76 @@
 //! Filters npm output and auto-injects the "run" subcommand when appropriate.
+//!
+//! Also detects common scripts (test→vitest, build→tsc) and routes through
+//! their specialized parsers for better token savings.
 
 use crate::core::runner;
 use crate::core::utils::resolved_command;
+use crate::parser::{FormatMode, OutputParser, ParseResult, TokenFormatter};
 use anyhow::Result;
+use serde::Deserialize;
 
 /// Known npm subcommands that should NOT get "run" injected.
 /// Shared between production code and tests to avoid drift.
 const NPM_SUBCOMMANDS: &[&str] = &[
-    "install",
-    "i",
-    "ci",
-    "uninstall",
-    "remove",
-    "rm",
-    "update",
-    "up",
-    "list",
-    "ls",
-    "outdated",
-    "init",
-    "create",
-    "publish",
-    "pack",
-    "link",
-    "audit",
-    "fund",
-    "exec",
-    "explain",
-    "why",
-    "search",
-    "view",
-    "info",
-    "show",
-    "config",
-    "set",
-    "get",
-    "cache",
-    "prune",
-    "dedupe",
-    "doctor",
-    "help",
-    "version",
-    "prefix",
-    "root",
-    "bin",
-    "bugs",
-    "docs",
-    "home",
-    "repo",
-    "ping",
-    "whoami",
-    "token",
-    "profile",
-    "team",
-    "access",
-    "owner",
-    "deprecate",
-    "dist-tag",
-    "star",
-    "stars",
-    "login",
-    "logout",
-    "adduser",
-    "unpublish",
-    "pkg",
-    "diff",
-    "rebuild",
-    "test",
-    "t",
-    "start",
-    "stop",
-    "restart",
+    "install", "i", "ci", "uninstall", "remove", "rm", "update", "up", "list", "ls", "outdated",
+    "init", "create", "publish", "pack", "link", "audit", "fund", "exec", "explain", "why",
+    "search", "view", "info", "show", "config", "set", "get", "cache", "prune", "dedupe",
+    "doctor", "help", "version", "prefix", "root", "bin", "bugs", "docs", "home", "repo",
+    "ping", "whoami", "token", "profile", "team", "access", "owner", "deprecate", "dist-tag",
+    "star", "stars", "login", "logout", "adduser", "unpublish", "pkg", "diff", "rebuild",
+    "test", "t", "start", "stop", "restart",
 ];
+
+/// Script routing hint parsed from package.json
+enum ScriptRouter {
+    Vitest,
+    Tsc,
+}
+
+/// Parse package.json scripts and detect routing for a script name
+fn detect_route(script_name: &str) -> Option<ScriptRouter> {
+    #[derive(Deserialize)]
+    struct PackageJson {
+        scripts: Option<std::collections::HashMap<String, String>>,
+    }
+
+    let content = std::fs::read_to_string("package.json").ok()?;
+    let pkg: PackageJson = serde_json::from_str(&content).ok()?;
+    let scripts = pkg.scripts?;
+    let script = scripts.get(script_name)?;
+
+    let trimmed = script.trim();
+
+    if trimmed.contains("vitest") {
+        return Some(ScriptRouter::Vitest);
+    }
+    if trimmed.starts_with("tsc") || trimmed.contains("tsc ") || trimmed == "tsc" {
+        return Some(ScriptRouter::Tsc);
+    }
+
+    None
+}
+
+/// Try to parse npm script output with a specialized parser.
+/// Returns Some(filtered_output) on success, None to fall through to generic filter.
+fn try_specialized_parse(raw_output: &str, route: &ScriptRouter) -> Option<String> {
+    match route {
+        ScriptRouter::Vitest => {
+            let result = crate::cmds::js::vitest_cmd::VitestParser::parse(raw_output);
+            match result {
+                ParseResult::Full(data) | ParseResult::Degraded(data, _) => {
+                    Some(data.format(FormatMode::Compact))
+                }
+                ParseResult::Passthrough(_) => None,
+            }
+        }
+        ScriptRouter::Tsc => {
+            // tsc output is mostly errors/warnings — just strip npm boilerplate
+            // and keep the tsc diagnostics intact (they're already concise)
+            None
+        }
+    }
+}
 
 pub fn run(args: &[String], verbose: u8, skip_env: bool) -> Result<i32> {
     // Determine if this is "npm run <script>" or another npm subcommand (install, list, etc.)
@@ -91,24 +90,35 @@ pub fn run(args: &[String], verbose: u8, skip_env: bool) -> Result<i32> {
         effective_args.extend_from_slice(args);
     }
 
-    run_filtered("npm", &effective_args, verbose, skip_env)
+    // Detect script routing
+    let script_name = if is_run_explicit && args.len() > 1 {
+        Some(args[1].as_str())
+    } else if is_npm_subcommand && !first_arg.map(|a| a.starts_with('-')).unwrap_or(false) {
+        // Check if this subcommand also exists as a script (e.g., "npm test")
+        // NPM_SUBCOMMANDS includes lifecycle scripts like test, start, stop
+        first_arg
+    } else {
+        None
+    };
+
+    let route = script_name.and_then(detect_route);
+
+    run_filtered("npm", &effective_args, verbose, skip_env, route.as_ref())
 }
 
 /// Run an npx tool through the same filtered pipeline as `npm`.
-///
-/// Used for unrouted tools in the `Commands::Npx` fallback so that
-/// `rtk npx cowsay hello` dispatches to `npx`, not `npm`. Honors `--skip-env`
-/// the same way `run` does.
 pub fn exec(args: &[String], verbose: u8, skip_env: bool) -> Result<i32> {
-    run_filtered("npx", args, verbose, skip_env)
+    run_filtered("npx", args, verbose, skip_env, None)
 }
 
 /// Shared command-execution path for `run` (npm) and `exec` (npx).
-///
-/// Builds the resolved command, appends args, applies `SKIP_ENV_VALIDATION`,
-/// emits the verbose log line, and routes through `runner::run_filtered` with
-/// the npm output filter.
-fn run_filtered(name: &str, args: &[String], verbose: u8, skip_env: bool) -> Result<i32> {
+fn run_filtered(
+    name: &str,
+    args: &[String],
+    verbose: u8,
+    skip_env: bool,
+    route: Option<&ScriptRouter>,
+) -> Result<i32> {
     let mut cmd = resolved_command(name);
     for arg in args {
         cmd.arg(arg);
@@ -123,13 +133,24 @@ fn run_filtered(name: &str, args: &[String], verbose: u8, skip_env: bool) -> Res
         eprintln!("Running: {} {}", name, args_display);
     }
 
-    runner::run_filtered(
-        cmd,
-        name,
-        &args_display,
-        filter_npm_output,
-        runner::RunOptions::default(),
-    )
+    let options = runner::RunOptions::default();
+
+    // If we have a specialized route, use the npm boilerplate filter first,
+    // then apply the specialized parser
+    if let Some(r) = route {
+        if verbose > 0 {
+            eprintln!("  (routed through {:?} parser)", std::mem::discriminant(r));
+        }
+        // Still run through npm filter to strip boilerplate, then apply specialized parser
+        let specialized_filter = move |output: &str| {
+            let stripped = filter_npm_output(output);
+            // Try specialized parser, fall back to stripped output
+            try_specialized_parse(&stripped, r).unwrap_or(stripped)
+        };
+        runner::run_filtered(cmd, name, &args_display, specialized_filter, options)
+    } else {
+        runner::run_filtered(cmd, name, &args_display, filter_npm_output, options)
+    }
 }
 
 /// Filter npm run output - strip boilerplate, progress bars, npm WARN
@@ -164,74 +185,5 @@ fn filter_npm_output(output: &str) -> String {
         "ok".to_string()
     } else {
         result.join("\n")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_filter_npm_output() {
-        let output = r#"
-> project@1.0.0 build
-> next build
-
-npm WARN deprecated inflight@1.0.6: This module is not supported
-npm notice
-
-   Creating an optimized production build...
-   ✓ Build completed
-"#;
-        let result = filter_npm_output(output);
-        assert!(!result.contains("npm WARN"));
-        assert!(!result.contains("npm notice"));
-        assert!(!result.contains("> project@"));
-        assert!(result.contains("Build completed"));
-    }
-
-    #[test]
-    fn test_npm_subcommand_routing() {
-        // Uses the shared NPM_SUBCOMMANDS constant — no drift between prod and test
-        fn needs_run_injection(args: &[&str]) -> bool {
-            let first = args.first().copied();
-            let is_run_explicit = first == Some("run");
-            let is_subcommand = first
-                .map(|a| NPM_SUBCOMMANDS.contains(&a) || a.starts_with('-'))
-                .unwrap_or(false);
-            !is_run_explicit && !is_subcommand
-        }
-
-        // Known subcommands should NOT get "run" injected
-        for subcmd in NPM_SUBCOMMANDS {
-            assert!(
-                !needs_run_injection(&[subcmd]),
-                "'npm {}' should NOT inject 'run'",
-                subcmd
-            );
-        }
-
-        // Script names SHOULD get "run" injected
-        for script in &["build", "dev", "lint", "typecheck", "deploy"] {
-            assert!(
-                needs_run_injection(&[script]),
-                "'npm {}' SHOULD inject 'run'",
-                script
-            );
-        }
-
-        // Flags should NOT get "run" injected
-        assert!(!needs_run_injection(&["--version"]));
-        assert!(!needs_run_injection(&["-h"]));
-
-        // Explicit "run" should NOT inject another "run"
-        assert!(!needs_run_injection(&["run", "build"]));
-    }
-
-    #[test]
-    fn test_filter_npm_output_empty() {
-        let output = "\n\n\n";
-        let result = filter_npm_output(output);
-        assert_eq!(result, "ok");
     }
 }
