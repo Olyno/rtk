@@ -526,12 +526,9 @@ pub fn apply_filter(filter: &CompiledFilter, stdout: &str) -> String {
     // 7. max_lines — absolute cap applied after head/tail (includes omit messages)
     // 6b. entropy_filter — drop low-entropy boilerplate lines (optional)
     if let Some(threshold) = filter.entropy_threshold {
-        lines = lines
-            .into_iter()
-            .filter(|l| {
-                l.trim().is_empty() || crate::core::entropy::shannon_entropy(l) >= threshold
-            })
-            .collect();
+        lines.retain(|l| {
+            l.trim().is_empty() || crate::core::entropy::shannon_entropy(l) >= threshold
+        });
     }
 
     // 7. max_lines — absolute cap applied after head/tail (includes omit messages)

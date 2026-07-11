@@ -1675,6 +1675,7 @@ fn main() {
     std::process::exit(code);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn uninstall_init_dispatch<UninstallHermes, UninstallKimi, UninstallStandard>(
     agent: Option<AgentTarget>,
     global: bool,
@@ -1688,7 +1689,8 @@ fn uninstall_init_dispatch<UninstallHermes, UninstallKimi, UninstallStandard>(
 where
     UninstallHermes: FnOnce(hooks::init::InitContext) -> Result<()>,
     UninstallKimi: FnOnce(hooks::init::InitContext) -> Result<()>,
-    UninstallStandard: FnOnce(bool, bool, bool, bool, bool, bool, hooks::init::InitContext) -> Result<()>,
+    UninstallStandard:
+        FnOnce(bool, bool, bool, bool, bool, bool, hooks::init::InitContext) -> Result<()>,
 {
     if agent == Some(AgentTarget::Hermes) {
         uninstall_hermes(ctx)

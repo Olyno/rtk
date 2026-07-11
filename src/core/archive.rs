@@ -43,7 +43,7 @@ fn archive_id(command: &str, raw: &str) -> String {
     hasher.update(command.as_bytes());
     hasher.update(raw.as_bytes());
     hasher.update(
-        &SystemTime::now()
+        SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos()
@@ -134,21 +134,11 @@ fn cleanup_old(dir: &std::path::Path) {
 
 /// Format the archive hint for appending to filtered output.
 pub fn archive_hint(id: &str, raw_size: usize, filtered_size: usize) -> String {
-    let saved = if raw_size > filtered_size {
-        raw_size - filtered_size
-    } else {
-        0
-    };
+    let saved = raw_size.saturating_sub(filtered_size);
+    let saved_pct = (saved * 100).checked_div(raw_size).unwrap_or(0);
     format!(
         "[rtk: full output archived ({}→{} bytes, -{}%), rtk expand {} to view]",
-        raw_size,
-        filtered_size,
-        if raw_size > 0 {
-            saved * 100 / raw_size
-        } else {
-            0
-        },
-        id
+        raw_size, filtered_size, saved_pct, id
     )
 }
 
