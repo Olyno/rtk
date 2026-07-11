@@ -10,6 +10,7 @@ strip_lines_matching = [
   "^Releasing state lock",
 ]
 max_lines = 80
+collapse_repeated_lines = 3
 on_empty = "terraform plan: no changes detected"
 
 [[tests.terraform-plan]]

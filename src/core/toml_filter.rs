@@ -14,14 +14,16 @@
 ///   - `RTK_TOML_DEBUG=1`  — print which filter matched and line counts to stderr
 ///
 /// Pipeline stages (applied in order):
-///   1. strip_ansi           — remove ANSI escape codes
-///   2. replace              — regex substitutions, line-by-line, chainable
-///   3. match_output         — short-circuit: if blob matches a pattern, return message immediately
-///   4. strip/keep_lines     — filter lines by regex
-///   5. truncate_lines_at    — truncate each line to N chars
-///   6. head/tail_lines      — keep first/last N lines
-///   7. max_lines            — absolute line cap
-///   8. on_empty             — message if result is empty
+///   1. strip_ansi              — remove ANSI escape codes
+///   2. replace                 — regex substitutions, line-by-line, chainable
+///   3. match_output            — short-circuit: if blob matches a pattern, return message immediately
+///   4. strip/keep_lines        — filter lines by regex
+///   5. truncate_lines_at       — truncate each line to N chars
+///   6. head/tail_lines         — keep first/last N lines
+///   7. collapse_repeated_lines — collapse runs of identical lines above the threshold
+///   8. entropy_threshold       — drop low-entropy boilerplate lines
+///   9. max_lines               — absolute line cap
+///  10. on_empty                — message if result is empty
 use super::constants::{FILTERS_TOML, RTK_DATA_DIR};
 use lazy_static::lazy_static;
 use regex::{Regex, RegexSet};
@@ -111,6 +113,10 @@ struct TomlFilterDef {
     /// Applied after head/tail_lines, before max_lines. None = disabled.
     #[serde(default)]
     entropy_threshold: Option<f64>,
+    /// Collapse consecutive repeated lines. When a run of identical lines exceeds
+    /// this count, the excess is replaced with a summary line. None = disabled.
+    #[serde(default)]
+    collapse_repeated_lines: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -159,6 +165,9 @@ pub struct CompiledFilter {
     /// Optional entropy threshold — lines below this Shannon entropy value are
     /// dropped. Applied after head/tail_lines and before max_lines. None = disabled.
     pub entropy_threshold: Option<f64>,
+    /// Collapse consecutive repeated lines when the run exceeds this count.
+    /// Applied after head/tail_lines and before entropy_threshold. None = disabled.
+    pub collapse_repeated_lines: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -408,6 +417,7 @@ fn compile_filter(name: String, def: TomlFilterDef) -> Result<CompiledFilter, St
         on_empty: def.on_empty,
         filter_stderr: def.filter_stderr,
         entropy_threshold: def.entropy_threshold,
+        collapse_repeated_lines: def.collapse_repeated_lines,
     })
 }
 
@@ -523,15 +533,43 @@ pub fn apply_filter(filter: &CompiledFilter, stdout: &str) -> String {
         }
     }
 
-    // 7. max_lines — absolute cap applied after head/tail (includes omit messages)
-    // 6b. entropy_filter — drop low-entropy boilerplate lines (optional)
+    // 7. collapse_repeated_lines — collapse long runs of identical lines
+    if let Some(max_keep) = filter.collapse_repeated_lines {
+        if max_keep > 0 {
+            let mut collapsed = Vec::with_capacity(lines.len());
+            let mut run_start = 0;
+            while run_start < lines.len() {
+                let run_value = &lines[run_start];
+                let mut run_end = run_start + 1;
+                while run_end < lines.len() && lines[run_end] == *run_value {
+                    run_end += 1;
+                }
+                let run_len = run_end - run_start;
+                if run_len > max_keep {
+                    collapsed.extend_from_slice(&lines[run_start..run_start + max_keep]);
+                    let extra = run_len - max_keep;
+                    collapsed.push(format!(
+                        "... ({} more identical line{})",
+                        extra,
+                        if extra == 1 { "" } else { "s" }
+                    ));
+                } else {
+                    collapsed.extend_from_slice(&lines[run_start..run_end]);
+                }
+                run_start = run_end;
+            }
+            lines = collapsed;
+        }
+    }
+
+    // 8. entropy_filter — drop low-entropy boilerplate lines (optional)
     if let Some(threshold) = filter.entropy_threshold {
         lines.retain(|l| {
             l.trim().is_empty() || crate::core::entropy::shannon_entropy(l) >= threshold
         });
     }
 
-    // 7. max_lines — absolute cap applied after head/tail (includes omit messages)
+    // 9. max_lines — absolute cap applied after head/tail (includes omit messages)
     if let Some(max) = filter.max_lines {
         if lines.len() > max {
             let truncated = lines.len() - max;
@@ -540,7 +578,7 @@ pub fn apply_filter(filter: &CompiledFilter, stdout: &str) -> String {
         }
     }
 
-    // 8. on_empty
+    // 10. on_empty
     let result = lines.join("\n");
     if result.trim().is_empty() {
         if let Some(ref msg) = filter.on_empty {
@@ -852,6 +890,69 @@ max_lines = 3
         let line_count = out.lines().count();
         // 3 content lines + 1 truncated message = 4 lines output
         assert_eq!(line_count, 4);
+        assert!(out.contains("lines truncated"));
+    }
+
+    #[test]
+    fn test_collapse_repeated_lines_basic() {
+        let f = first_filter(
+            r#"
+schema_version = 1
+[filters.f]
+match_command = "^cmd"
+collapse_repeated_lines = 2
+"#,
+        );
+        let input = "a\na\na\na\nb\nb\nc";
+        let out = apply_filter(&f, input);
+        assert_eq!(out, "a\na\n... (2 more identical lines)\nb\nb\nc");
+    }
+
+    #[test]
+    fn test_collapse_repeated_lines_single_extra() {
+        let f = first_filter(
+            r#"
+schema_version = 1
+[filters.f]
+match_command = "^cmd"
+collapse_repeated_lines = 1
+"#,
+        );
+        let out = apply_filter(&f, "x\nx\nx");
+        assert_eq!(out, "x\n... (2 more identical lines)");
+    }
+
+    #[test]
+    fn test_collapse_repeated_lines_no_change_when_under_threshold() {
+        let f = first_filter(
+            r#"
+schema_version = 1
+[filters.f]
+match_command = "^cmd"
+collapse_repeated_lines = 3
+"#,
+        );
+        let input = "a\na\nb\nb\nb";
+        let out = apply_filter(&f, input);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn test_collapse_repeated_lines_respects_max_lines() {
+        let f = first_filter(
+            r#"
+schema_version = 1
+[filters.f]
+match_command = "^cmd"
+collapse_repeated_lines = 2
+max_lines = 3
+"#,
+        );
+        let input = "a\na\na\na\na\nb";
+        let out = apply_filter(&f, input);
+        // collapse produces: a, a, ... (3 more identical lines), b (4 lines)
+        // max_lines=3 keeps 3 lines and appends truncation message -> 4 lines total
+        assert!(out.contains("... (3 more identical lines)"));
         assert!(out.contains("lines truncated"));
     }
 
