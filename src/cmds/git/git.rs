@@ -72,7 +72,7 @@ fn build_status_command(args: &[String], global_args: &[String]) -> Command {
     let mut cmd = git_cmd(global_args);
     cmd.arg("status");
     if uses_compact_status_path(args) {
-        cmd.args(["--porcelain", "-b"]);
+        cmd.args(["--porcelain", "-b", "-uall"]);
     } else {
         cmd.args(args);
     }
@@ -626,6 +626,7 @@ fn truncate_line(line: &str, width: usize) -> String {
     }
 }
 
+/// Preserve RTK's branch/clean framing while keeping porcelain file lines intact.
 pub(crate) fn format_status_output(porcelain: &str) -> String {
     format_status_inner(porcelain, None)
 }
@@ -860,9 +861,34 @@ fn run_status(args: &[String], verbose: u8, global_args: &[String]) -> Result<i3
     let mut raw_cmd = git_cmd_c_locale(global_args);
     raw_cmd.arg("status");
     raw_cmd.args(args);
-    let raw_output = exec_capture(&mut raw_cmd)
-        .map(|r| r.stdout)
-        .unwrap_or_default();
+    let raw_result = exec_capture(&mut raw_cmd).context("Failed to run git status")?;
+
+    let original_cmd = if args.is_empty() {
+        "git status".to_string()
+    } else {
+        format!("git status {}", args.join(" "))
+    };
+    let rtk_cmd = if args.is_empty() {
+        "rtk git status".to_string()
+    } else {
+        format!("rtk git status {}", args.join(" "))
+    };
+
+    if !raw_result.success() {
+        if !raw_result.stderr.trim().is_empty() {
+            eprintln!("{}", raw_result.stderr.trim());
+        }
+        timer.track(&original_cmd, &rtk_cmd, &raw_result.stdout, &raw_result.stdout);
+        return Ok(raw_result.exit_code);
+    }
+
+    let raw_output = raw_result.stdout;
+
+    // Check session cache — git status is heavily repeated in dev loops.
+    if let Some(cached) = timer.check_cache(&original_cmd, &raw_output) {
+        println!("{cached}");
+        return Ok(0);
+    }
 
     let mut cmd = build_status_command(args, global_args);
     let result = exec_capture(&mut cmd).context("Failed to run git status")?;
@@ -876,16 +902,6 @@ fn run_status(args: &[String], verbose: u8, global_args: &[String]) -> Result<i3
         if !message.is_empty() {
             eprintln!("{}", message);
         }
-        let original_cmd = if args.is_empty() {
-            "git status".to_string()
-        } else {
-            format!("git status {}", args.join(" "))
-        };
-        let rtk_cmd = if args.is_empty() {
-            "rtk git status".to_string()
-        } else {
-            format!("rtk git status {}", args.join(" "))
-        };
         let shown = never_worse(&raw_output, &message);
         timer.track(&original_cmd, &rtk_cmd, &raw_output, shown);
         return Ok(result.exit_code);
@@ -906,17 +922,6 @@ fn run_status(args: &[String], verbose: u8, global_args: &[String]) -> Result<i3
 
     let shown = never_worse(&raw_output, &final_output);
     println!("{}", shown);
-
-    let original_cmd = if args.is_empty() {
-        "git status".to_string()
-    } else {
-        format!("git status {}", args.join(" "))
-    };
-    let rtk_cmd = if args.is_empty() {
-        "rtk git status".to_string()
-    } else {
-        format!("rtk git status {}", args.join(" "))
-    };
 
     timer.track(&original_cmd, &rtk_cmd, &raw_output, shown);
 
@@ -1890,10 +1895,10 @@ mod tests {
     }
 
     #[test]
-    fn test_build_status_command_default_compact() {
+    fn test_build_status_command_default_includes_uall() {
         let cmd = build_status_command(&[], &[]);
         let args: Vec<_> = cmd.get_args().collect();
-        assert_eq!(args, vec!["status", "--porcelain", "-b"]);
+        assert_eq!(args, vec!["status", "--porcelain", "-b", "-uall"]);
     }
 
     #[test]
@@ -1920,7 +1925,7 @@ mod tests {
         let args = vec!["--short".to_string(), "--branch".to_string()];
         let cmd = build_status_command(&args, &[]);
         let cmd_args: Vec<_> = cmd.get_args().collect();
-        assert_eq!(cmd_args, vec!["status", "--porcelain", "-b"]);
+        assert_eq!(cmd_args, vec!["status", "--porcelain", "-b", "-uall"]);
     }
 
     #[test]
