@@ -32,7 +32,9 @@ Thumbs.db
 scripts/benchmark/diff/
 scripts/benchmark/rtk/
 scripts/benchmark/unix/
+scripts/benchmark-compare/
 benchmark-report.md
+benchmark-compare-report.md
 
 # SQLite databases
 *.db
