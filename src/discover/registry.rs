@@ -3528,6 +3528,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_rewrite_mix_test() {
+        assert_eq!(
+            rewrite_command_no_prefixes("mix test", &[]),
+            Some("rtk mix test".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_mix_compile() {
+        assert_eq!(
+            rewrite_command_no_prefixes("mix compile", &[]),
+            Some("rtk mix compile".into())
+        );
+    }
+
     // --- Compound operator edge cases ---
 
     #[test]

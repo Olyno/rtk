@@ -785,12 +785,12 @@ pub const RULES: &[RtkRule] = &[
         subcmd_status: &[],
     },
     RtkRule {
-        pattern: r"^mix\s+(compile|format)(\s|$)",
+        pattern: r"^mix\s+(compile|format|test)(\s|$)",
         rtk_cmd: "rtk mix",
         rewrite_prefixes: &["mix"],
         category: "Build",
         savings_pct: 65.0,
-        subcmd_savings: &[],
+        subcmd_savings: &[("test", 85.0)],
         subcmd_status: &[],
     },
     RtkRule {
