@@ -3318,6 +3318,7 @@ mod tests {
             "mvn",
             "dart",
             "flutter",
+            "mix",
         ];
 
         let unclassified: Vec<String> = Cli::command()
