@@ -1,5 +1,6 @@
 //! Filters pip and uv package manager output.
 
+use crate::cmds::compact_pip_show::filter_pip_show;
 use crate::core::guard::never_worse;
 use crate::core::stream::exec_capture;
 use crate::core::tracking;
@@ -37,7 +38,8 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     let (cmd_str, filtered, exit_code) = match subcommand {
         "list" => run_list(base_cmd, &args[1..], verbose)?,
         "outdated" => run_outdated(base_cmd, &args[1..], verbose)?,
-        "install" | "uninstall" | "show" => {
+        "show" => run_show(base_cmd, &args[1..], verbose)?,
+        "install" | "uninstall" => {
             // Passthrough for write operations
             run_passthrough(base_cmd, args, verbose)?
         }
@@ -108,6 +110,32 @@ fn run_outdated(base_cmd: &str, args: &[String], verbose: u8) -> Result<(String,
     let raw = format!("{}\n{}", result.stdout, result.stderr);
 
     let filtered = never_worse(&raw, &filter_pip_outdated(&result.stdout)).to_string();
+    println!("{}", filtered);
+
+    Ok((raw, filtered, result.exit_code))
+}
+
+fn run_show(base_cmd: &str, args: &[String], verbose: u8) -> Result<(String, String, i32)> {
+    let mut cmd = resolved_command(base_cmd);
+
+    if base_cmd == "uv" {
+        cmd.arg("pip");
+    }
+
+    cmd.arg("show");
+    for arg in args {
+        cmd.arg(arg);
+    }
+
+    if verbose > 0 {
+        eprintln!("Running: {} pip show {}", base_cmd, args.join(" "));
+    }
+
+    let result = exec_capture(&mut cmd)
+        .with_context(|| format!("Failed to run {} pip show", base_cmd))?;
+
+    let raw = format!("{}\n{}", result.stdout, result.stderr);
+    let filtered = never_worse(&raw, &filter_pip_show(&result.stdout)).to_string();
     println!("{}", filtered);
 
     Ok((raw, filtered, result.exit_code))

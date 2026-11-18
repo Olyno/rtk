@@ -3,6 +3,7 @@
 //! Also detects common scripts (test→vitest, build→tsc) and routes through
 //! their specialized parsers for better token savings.
 
+use crate::cmds::compact_npm_list::filter_npm_list;
 use crate::core::runner;
 use crate::core::utils::resolved_command;
 use crate::parser::{FormatMode, OutputParser, ParseResult, TokenFormatter};
@@ -135,9 +136,16 @@ fn run_filtered(
 
     let options = runner::RunOptions::default();
 
-    // If we have a specialized route, use the npm boilerplate filter first,
-    // then apply the specialized parser
-    if let Some(r) = route {
+    // `npm list` output is a deeply-nested tree; use a dedicated compactor.
+    let is_npm_list = name == "npm"
+        && args
+            .first()
+            .map(|a| a == "list" || a == "ls")
+            .unwrap_or(false);
+
+    if is_npm_list {
+        runner::run_filtered(cmd, name, &args_display, filter_npm_list, options)
+    } else if let Some(r) = route {
         if verbose > 0 {
             eprintln!("  (routed through {:?} parser)", std::mem::discriminant(r));
         }
