@@ -56,10 +56,16 @@ fn archive_id(command: &str, raw: &str) -> String {
 /// Archive a command output. Returns the archive ID if the output was large
 /// enough to warrant archiving, None otherwise.
 ///
-/// The caller should append `[rtk: full output archived, rtk expand <id> to view]`
-/// to the filtered output.
-pub fn archive(command: &str, raw: &str, _filtered: &str) -> Option<String> {
+/// The caller should append a `§ref:<id>§` token to the filtered output.
+pub fn archive(command: &str, raw: &str, filtered: &str) -> Option<String> {
     if raw.len() < MIN_ARCHIVE_SIZE {
+        return None;
+    }
+
+    // Only archive when the raw output is materially larger than the filtered
+    // output. If filtering did not compress much, the ref token is overhead.
+    let filtered_len = filtered.len().max(1);
+    if raw.len() < filtered_len * 2 && filtered.len() >= 100 {
         return None;
     }
 
@@ -132,14 +138,16 @@ fn cleanup_old(dir: &std::path::Path) {
     }
 }
 
+/// Compact reference token that can be emitted instead of a verbose hint.
+/// LLMs can resolve it with `rtk expand <id>`.
+pub fn ref_token(id: &str) -> String {
+    format!("§ref:{}§", id)
+}
+
 /// Format the archive hint for appending to filtered output.
-pub fn archive_hint(id: &str, raw_size: usize, filtered_size: usize) -> String {
-    let saved = raw_size.saturating_sub(filtered_size);
-    let saved_pct = (saved * 100).checked_div(raw_size).unwrap_or(0);
-    format!(
-        "[rtk: full output archived ({}→{} bytes, -{}%), rtk expand {} to view]",
-        raw_size, filtered_size, saved_pct, id
-    )
+/// Kept ultra-compact: the LLM learns the meaning from agent instructions.
+pub fn archive_hint(id: &str, _raw_size: usize, _filtered_size: usize) -> String {
+    ref_token(id)
 }
 
 #[cfg(test)]
@@ -176,5 +184,16 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1));
         let id2 = archive_id("cmd", "out1");
         assert_ne!(id1, id2, "IDs should differ due to nanosecond timestamp");
+    }
+
+    #[test]
+    fn test_ref_token_format() {
+        assert_eq!(ref_token("abc123"), "§ref:abc123§");
+    }
+
+    #[test]
+    fn test_archive_hint_is_ref_token() {
+        let hint = archive_hint("deadbeef", 1000, 100);
+        assert_eq!(hint, "§ref:deadbeef§");
     }
 }

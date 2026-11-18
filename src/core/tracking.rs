@@ -1492,10 +1492,12 @@ impl TimedExecution {
         crate::core::bounce::record_filtered(original_cmd);
 
         // Archive large raw output so the full content is never lost, even if
-        // the filtered version is aggressively compressed.
+        // the filtered version is aggressively compressed. Emit a compact
+        // §ref:<id>§ token on stdout so the LLM can request the full output
+        // without paying for it in the current context.
         if let Some(archive_id) = crate::core::archive::archive(original_cmd, input, output) {
             let hint = crate::core::archive::archive_hint(&archive_id, input.len(), output.len());
-            eprintln!("{hint}");
+            println!("{hint}");
         }
     }
 
@@ -1530,10 +1532,10 @@ impl TimedExecution {
     pub fn check_cache(&self, original_cmd: &str, raw_output: &str) -> Option<String> {
         let key = crate::core::cache::cache_key(original_cmd, raw_output, "");
         let entry = crate::core::cache::load_cached(&key)?;
-        let saved = entry.raw_tokens.saturating_sub(entry.filtered_tokens);
         Some(format!(
-            "{}\n[rtk: cached, -{} tokens]",
-            entry.filtered, saved
+            "{}\n{}",
+            entry.filtered,
+            crate::core::archive::ref_token(&key)
         ))
     }
 

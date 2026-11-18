@@ -193,9 +193,9 @@ enum Commands {
         yes: bool,
     },
 
-    /// Retrieve full archived output from a previous filtered command
+    /// Retrieve full archived or cached output from a previous filtered command
     Expand {
-        /// Archive ID to retrieve (shown in [rtk: full output archived, rtk expand <id> to view])
+        /// Archive/cache ID to retrieve (shown as §ref:<id>§ in output)
         #[arg(required = true)]
         id: String,
     },
@@ -2291,17 +2291,23 @@ fn run_cli() -> Result<i32> {
         }
 
         Commands::Expand { id } => {
-            match crate::core::archive::retrieve(&id) {
-                Some(entry) => {
-                    println!("Command: {}", entry.command);
-                    println!("Size: {} bytes", entry.raw_size);
-                    println!("═══════════════════════════════════════");
-                    println!("{}", entry.raw_output);
-                }
-                None => {
-                    eprintln!("rtk: archive entry '{}' not found or expired", id);
-                    return Ok(1);
-                }
+            // Try archive first (short 8-char IDs), then cache (64-char keys).
+            if let Some(entry) = crate::core::archive::retrieve(&id) {
+                println!("Command: {}", entry.command);
+                println!("Size: {} bytes", entry.raw_size);
+                println!("═══════════════════════════════════════");
+                println!("{}", entry.raw_output);
+            } else if let Some(entry) = crate::core::cache::load_cached(&id) {
+                println!("[rtk: cached output]");
+                println!(
+                    "Raw tokens: {} -> {}",
+                    entry.raw_tokens, entry.filtered_tokens
+                );
+                println!("═══════════════════════════════════════");
+                println!("{}", entry.filtered);
+            } else {
+                eprintln!("rtk: archive/cache entry '{}' not found or expired", id);
+                return Ok(1);
             }
             0
         }
