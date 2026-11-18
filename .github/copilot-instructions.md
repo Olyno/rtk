@@ -23,6 +23,37 @@ rtk discover          # Scan session history for missed rtk opportunities
 rtk proxy <cmd>       # Run a command raw (no filtering) but still track it
 ```
 
+### Expanded command reference
+
+Always prefer `rtk <cmd>` when a filter exists. If you need the raw bytes, use `rtk proxy <cmd>`.
+
+**Context & discovery (run these first in a new session)**
+- `rtk index [path]` — build/update the local symbol index.
+- `rtk read --mode signatures <file>` — read only function/class signatures.
+- `rtk read --mode map <file>` — signatures + imports.
+
+**Compression & references (use before pasting long output)**
+- `rtk expand <hash>` — restore output hidden behind `§ref:<hash>§`.
+- `rtk diff <file1> <file2>` — changed-lines-only diff.
+- `rtk pipe [-f filter]` — filter stdin through an RTK filter.
+
+**Analytics & trust**
+- `rtk gain` — token savings dashboard.
+- `rtk gain --history` — per-command history with savings.
+- `rtk discover` / `rtk learn` — scan session history for missed RTK opportunities.
+- `rtk trust` / `rtk untrust` — authorize/revoke project TOML filters.
+- `rtk verify` — validate TOML filter syntax and inline tests.
+
+**Supported ecosystems (prefix with `rtk`)**
+Git / forges, Rust, Go, Node, Python, Ruby, .NET, Flutter/Dart, Gradle, Cloud/Ops (docker, kubectl, aws, curl, wget, psql, mvn), Elixir (`mix`), and utilities (`ls`, `tree`, `find`, `wc`, `env`, `grep`, `rg`, `json`, `log`, `err`, `summary`, `smart`, `test`, `run`, `proxy`).
+
+**Automation tip**
+- `rtk run <cmd>` auto-routes recognized commands to the right filter, so you can default to it when unsure.
+- `rtk proxy <cmd>` always runs raw when you need every byte.
+
+**When NOT to use rtk**
+- When the raw full output is required and `rtk expand` is not enough: `rtk proxy <cmd>`.
+
 **Verify rtk is installed before starting:**
 ```bash
 rtk --version   # Should print: rtk X.Y.Z

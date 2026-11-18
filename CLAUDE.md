@@ -65,6 +65,46 @@ cargo deb                     # DEB package (needs cargo-deb)
 cargo generate-rpm            # RPM package (needs cargo-generate-rpm, after release build)
 ```
 
+## RTK Command Reference
+
+Always prefer `rtk <cmd>` when a filter exists. If you need the raw bytes, use `rtk proxy <cmd>`.
+
+### Context & discovery (run these first in a new session)
+- `rtk index [path]` — build/update the local symbol index.
+- `rtk read --mode signatures <file>` — read only function/class signatures.
+- `rtk read --mode map <file>` — signatures + imports.
+
+### Compression & references (use before pasting long output)
+- `rtk expand <hash>` — restore output hidden behind `§ref:<hash>§`.
+- `rtk diff <file1> <file2>` — changed-lines-only diff.
+- `rtk pipe [-f filter]` — filter stdin through an RTK filter.
+
+### Analytics & trust
+- `rtk gain` — token savings dashboard.
+- `rtk gain --history` — per-command history with savings.
+- `rtk discover` / `rtk learn` — scan session history for missed RTK opportunities.
+- `rtk session` — session adoption audit.
+- `rtk trust` / `rtk untrust` — authorize/revoke project TOML filters.
+- `rtk verify` — validate TOML filter syntax and inline tests.
+
+### Supported ecosystems (prefix with `rtk`)
+- **Git / forges**: `git status`, `git log`, `git diff`, `git branch`, `git stash list`, `git worktree list`, `gh pr/issue/run/repo`, `glab mr/issue/ci`, `gt`.
+- **Rust**: `cargo test/build/clippy`.
+- **Go**: `go test`, `golangci-lint`.
+- **Node**: `npm`, `pnpm`, `npx`, `next`, `vitest`, `jest`, `playwright`, `prisma`, `tsc`, `lint` (ESLint), `prettier`.
+- **Python**: `pytest`, `pip`, `ruff`, `mypy`.
+- **Ruby**: `rake`, `rspec`, `rubocop`.
+- **.NET**: `dotnet`.
+- **Mobile**: `flutter`, `dart`, `gradlew`.
+- **Cloud / ops**: `docker`, `kubectl`, `oc`, `aws`, `curl`, `wget`, `psql`, `mvn`.
+- **Elixir**: `mix`.
+- **Utilities**: `ls`, `tree`, `find`, `wc`, `env`, `grep`, `rg`, `json`, `log`, `err`, `summary`, `smart`, `test`, `run`, `proxy`.
+- **Automation**: `rtk run <cmd>` auto-routes recognized commands to the right filter, so you can default to it when unsure; `rtk proxy <cmd>` always runs raw.
+
+### When NOT to use rtk
+- When the raw full output is required and `rtk expand` is not enough: `rtk proxy <cmd>`.
+- For unsupported one-off commands where every byte matters.
+
 ## Architecture
 
 rtk uses a **command proxy architecture**: `main.rs` routes CLI commands via a Clap `Commands` enum to specialized filter modules in `src/cmds/*/`, each of which executes the underlying command and compresses its output. Token savings are tracked in SQLite via `src/core/tracking.rs`.
