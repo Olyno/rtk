@@ -711,7 +711,7 @@ enum Commands {
         args: Vec<String>,
     },
 
-    /// Execute raw shell command, no filtering (escape hatch)
+    /// Run a command, auto-routing to RTK filters when recognized
     Run {
         /// Command string to execute (use -c for shell-like invocation)
         #[arg(short = 'c', long = "command")]
@@ -1704,6 +1704,23 @@ where
     }
 }
 
+fn try_route_run(command: Option<&str>, args: &[String]) -> Option<Cli> {
+    let mut tokens = vec!["rtk".to_string()];
+    if let Some(c) = command {
+        tokens.extend(shell_split(c));
+    } else {
+        tokens.extend(args.iter().cloned());
+    }
+    if tokens.len() <= 1 {
+        return None;
+    }
+    let nested = Cli::try_parse_from(&tokens).ok()?;
+    if matches!(nested.command, Commands::Run { .. }) {
+        return None;
+    }
+    Some(nested)
+}
+
 fn run_cli() -> Result<i32> {
     // Fire-and-forget telemetry ping (1/day, non-blocking)
     core::telemetry::maybe_ping();
@@ -1738,6 +1755,10 @@ fn run_cli() -> Result<i32> {
         hooks::integrity::runtime_check()?;
     }
 
+    execute(cli)
+}
+
+fn execute(cli: Cli) -> Result<i32> {
     let code = match cli.command {
         Commands::Ls { args } => ls::run(&args, cli.verbose)?,
 
@@ -2621,6 +2642,13 @@ fn run_cli() -> Result<i32> {
         }
 
         Commands::Run { command, args } => {
+            // Auto-route `rtk run <cmd> ...` to the specialized RTK filter when
+            // the inner command is recognized (e.g. git, docker, dotnet, cargo).
+            // Unknown or shell-like invocations fall back to raw execution.
+            if let Some(nested) = try_route_run(command.as_deref(), &args) {
+                return execute(nested);
+            }
+
             let raw = match command {
                 Some(c) => c,
                 None if !args.is_empty() => args.join(" "),
@@ -2872,6 +2900,7 @@ fn is_operational_command(cmd: &Commands) -> bool {
             | Commands::Glab { .. }
             | Commands::Pnpm { .. }
             | Commands::Err { .. }
+            | Commands::Run { .. }
             | Commands::Test { .. }
             | Commands::Json { .. }
             | Commands::Deps { .. }
@@ -3790,5 +3819,81 @@ mod tests {
             }
             _ => panic!("Expected Init command"),
         }
+    }
+
+    // --- try_route_run auto-routing ---
+
+    #[test]
+    fn test_run_routes_git_status() {
+        let routed = try_route_run(Some("git status"), &[]);
+        assert!(routed.is_some());
+        assert!(matches!(
+            routed.unwrap().command,
+            Commands::Git {
+                command: GitCommands::Status { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_run_routes_docker_ps() {
+        let routed = try_route_run(None, &["docker".into(), "ps".into()]);
+        assert!(matches!(
+            routed.unwrap().command,
+            Commands::Docker {
+                command: DockerCommands::Ps { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_run_routes_dotnet_test() {
+        let routed = try_route_run(None, &["dotnet".into(), "test".into()]);
+        assert!(matches!(
+            routed.unwrap().command,
+            Commands::Dotnet {
+                command: DotnetCommands::Test { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_run_routes_cargo_test() {
+        let routed = try_route_run(None, &["cargo".into(), "test".into()]);
+        assert!(matches!(
+            routed.unwrap().command,
+            Commands::Cargo {
+                command: CargoCommands::Test { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_run_routes_npm_install() {
+        let routed = try_route_run(None, &["npm".into(), "install".into()]);
+        assert!(matches!(routed.unwrap().command, Commands::Npm { .. }));
+    }
+
+    #[test]
+    fn test_run_avoids_recursion() {
+        // `rtk run run echo` must not route back to Run.
+        let routed = try_route_run(None, &["run".into(), "echo".into()]);
+        assert!(routed.is_none());
+    }
+
+    #[test]
+    fn test_run_unknown_command_no_route() {
+        let routed = try_route_run(None, &["echo".into(), "hello".into()]);
+        assert!(routed.is_none());
+    }
+
+    #[test]
+    fn test_run_empty_no_route() {
+        let routed = try_route_run(None, &[]);
+        assert!(routed.is_none());
     }
 }
