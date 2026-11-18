@@ -10,6 +10,7 @@ pub mod display_helpers;
 pub mod entropy;
 pub mod filter;
 pub mod guard;
+pub mod redact;
 pub mod related;
 pub mod runner;
 pub mod signatures;

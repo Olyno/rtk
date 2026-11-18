@@ -14,6 +14,7 @@ pub fn emit_guarded(filtered: &str, hint: Option<&str>, raw: &str) -> String {
         Some(h) => format!("{}\n{}", filtered, h),
         None => filtered.to_string(),
     };
+    let body = crate::core::redact::redact(&body);
     let shown = crate::core::guard::never_worse(raw, &body).to_string();
     println!("{}", shown);
     shown
