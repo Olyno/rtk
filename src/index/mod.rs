@@ -30,6 +30,7 @@ impl ProjectIndex {
 
     /// Full project scan: index files then extract code symbols from source files only.
     pub fn scan(&mut self) -> Result<(usize, usize)> {
+        self.code.clear()?;
         let file_count = self.files.scan()?;
         let mut symbol_count = 0;
 

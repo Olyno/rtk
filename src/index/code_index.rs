@@ -101,6 +101,14 @@ impl CodeIndex {
         Ok(Self { conn })
     }
 
+    /// Clear all symbols and content previews. Called at the start of a fresh scan
+    /// so stale entries from ignored directories (e.g., _references) are removed.
+    pub fn clear(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM symbols", [])?;
+        self.conn.execute("DELETE FROM file_content", [])?;
+        Ok(())
+    }
+
     pub fn scan_file(&mut self, rel_path: &str, content: &str) -> Result<usize> {
         let symbols = extract_symbols(rel_path, content);
         let tx = self.conn.transaction()?;

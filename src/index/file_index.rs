@@ -197,27 +197,115 @@ impl FileIndex {
     }
 }
 
+/// Directories created by common package managers, build tools, IDEs, and test
+/// frameworks. These are excluded from the project index so it does not surface
+/// generated or third-party artifacts.
+const IGNORED_DIRS: &[&str] = &[
+    // Version control
+    ".git",
+    ".svn",
+    ".hg",
+    // Node / JS / TS
+    "node_modules",
+    ".pnpm-store",
+    ".yarn",
+    ".yarn-cache",
+    // Go / PHP vendoring
+    "vendor",
+    // Rust
+    "target",
+    ".cargo",
+    // Python
+    "__pycache__",
+    ".venv",
+    "venv",
+    "env",
+    ".tox",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "htmlcov",
+    "coverage",
+    ".coverage",
+    ".hypothesis",
+    ".nox",
+    ".egg-info",
+    ".eggs",
+    // Generic build output
+    "dist",
+    "build",
+    "out",
+    ".next",
+    ".nuxt",
+    ".output",
+    ".svelte-kit",
+    ".astro",
+    ".vercel",
+    ".turbo",
+    ".cache",
+    ".parcel-cache",
+    ".webpack",
+    ".cache-loader",
+    ".serverless",
+    // Infrastructure-as-code
+    ".terraform",
+    ".terragrunt-cache",
+    // Apple / Swift / iOS
+    "Pods",
+    ".build",
+    ".swiftpm",
+    "DerivedData",
+    "xcuserdata",
+    // Flutter / Dart
+    ".dart_tool",
+    ".pub-cache",
+    ".flutter-plugins",
+    ".flutter-plugins-dependencies",
+    // Elixir / Erlang
+    "_build",
+    "deps",
+    ".elixir_ls",
+    // Haskell
+    ".stack-work",
+    "dist-newstyle",
+    ".cabal-sandbox",
+    ".opam",
+    // Elm
+    "elm-stuff",
+    // JVM / Android / .NET
+    ".gradle",
+    "bin",
+    "obj",
+    "packages",
+    "TestResults",
+    "publish",
+    "artifacts",
+    // IDEs
+    ".idea",
+    ".vs",
+    ".vscode",
+    // Reference / temporary
+    "_references",
+    ".expo",
+    ".expo-shared",
+    "web-build",
+    // Ruby
+    ".ruby-lsp",
+    ".yardoc",
+    // Misc caches
+    ".jhw_cache",
+    ".tmp",
+];
+
+/// Return `true` if `path` walks through any directory that should be ignored.
+pub fn is_ignored_path(path: &str) -> bool {
+    path.split(['/', '\\'])
+        .any(|segment| IGNORED_DIRS.contains(&segment))
+}
+
 fn should_index(entry: &walkdir::DirEntry) -> bool {
-    let name = entry.file_name().to_string_lossy();
-    if name.starts_with('.')
-        && name != "."
-        && name != ".."
-        && (name == ".git" || name == ".svn" || name == ".hg")
-    {
-        return false;
-    }
-    if name == "node_modules"
-        || name == "target"
-        || name == "zig-cache"
-        || name == "__pycache__"
-        || name == "dist"
-        || name == "build"
-        || name == ".venv"
-        || name == "venv"
-    {
-        return false;
-    }
-    true
+    let path = entry.path().to_string_lossy();
+    !is_ignored_path(&path)
 }
 
 fn count_lines(path: &Path) -> Option<usize> {
