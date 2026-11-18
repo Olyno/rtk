@@ -145,6 +145,10 @@ enum Commands {
         /// Preview changes without writing any files (combine with -v to show content)
         #[arg(long = "dry-run", conflicts_with = "show")]
         dry_run: bool,
+
+        /// Compress generated markdown instruction files (saves tokens)
+        #[arg(long)]
+        compress: bool,
     },
 
     /// Show token savings: summary, history, daily/weekly/monthly charts
@@ -2165,10 +2169,12 @@ fn execute(cli: Cli) -> Result<i32> {
             codex,
             copilot,
             dry_run,
+            compress,
         } => {
             let ctx = hooks::init::InitContext {
                 verbose: cli.verbose,
                 dry_run,
+                compress,
             };
             if show {
                 hooks::init::show_config(codex)?;
@@ -3146,6 +3152,7 @@ mod tests {
         let ctx = hooks::init::InitContext {
             verbose: 2,
             dry_run: true,
+            ..Default::default()
         };
 
         let kimi_called = Cell::new(false);
@@ -3185,6 +3192,7 @@ mod tests {
         let ctx = hooks::init::InitContext {
             verbose: 2,
             dry_run: true,
+            ..Default::default()
         };
 
         let result = uninstall_init_dispatch(

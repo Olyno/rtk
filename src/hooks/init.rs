@@ -101,6 +101,7 @@ pub enum PatchResult {
 pub struct InitContext {
     pub verbose: u8,
     pub dry_run: bool,
+    pub compress: bool,
 }
 
 /// Shared dry-run footer printed at the end of every init sub-mode.
@@ -350,7 +351,17 @@ pub fn run(
 /// Idempotent file write: create or update if content differs.
 /// When `dry_run` is true, prints the intended action and does not touch the filesystem.
 fn write_if_changed(path: &Path, content: &str, name: &str, ctx: InitContext) -> Result<bool> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose,
+        dry_run,
+        compress,
+    } = ctx;
+
+    let content = if compress && name.ends_with(".md") {
+        crate::cmds::compress::compress_markdown(content)
+    } else {
+        content.to_string()
+    };
     if path.exists() {
         let existing = fs::read_to_string(path)
             .with_context(|| format!("Failed to read {}: {}", name, path.display()))?;
@@ -367,7 +378,7 @@ fn write_if_changed(path: &Path, content: &str, name: &str, ctx: InitContext) ->
                     println!("[dry-run] content:\n{}", content);
                 }
             } else {
-                atomic_write(path, content)
+                atomic_write(path, &content)
                     .with_context(|| format!("Failed to write {}: {}", name, path.display()))?;
                 if verbose > 0 {
                     eprintln!("Updated {}: {}", name, path.display());
@@ -382,7 +393,7 @@ fn write_if_changed(path: &Path, content: &str, name: &str, ctx: InitContext) ->
                 println!("[dry-run] content:\n{}", content);
             }
         } else {
-            atomic_write(path, content)
+            atomic_write(path, &content)
                 .with_context(|| format!("Failed to write {}: {}", name, path.display()))?;
             if verbose > 0 {
                 eprintln!("Created {}: {}", name, path.display());
@@ -570,7 +581,9 @@ fn remove_hook_from_json(root: &mut serde_json::Value) -> bool {
 /// Remove RTK hook from settings.json file
 /// Backs up before modification, returns true if hook was found and removed
 fn remove_hook_from_settings(ctx: InitContext) -> Result<bool> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let claude_dir = resolve_claude_dir()?;
     let settings_path = claude_dir.join(SETTINGS_JSON);
 
@@ -635,7 +648,9 @@ pub fn uninstall(
     pi: bool,
     ctx: InitContext,
 ) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     if codex {
         uninstall_codex(global, ctx)?;
         if dry_run {
@@ -905,7 +920,9 @@ fn uninstall_codex(global: bool, ctx: InitContext) -> Result<()> {
 }
 
 fn uninstall_codex_at(codex_dir: &Path, ctx: InitContext) -> Result<Vec<String>> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let mut removed = Vec::new();
     let absolute_rtk_md_ref = codex_rtk_md_ref(codex_dir);
 
@@ -966,7 +983,9 @@ fn patch_settings_json_command(
     include_opencode: bool,
     ctx: InitContext,
 ) -> Result<PatchResult> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let claude_dir = resolve_claude_dir()?;
     let settings_path = claude_dir.join(SETTINGS_JSON);
 
@@ -1240,7 +1259,9 @@ fn run_default_mode(
 /// and removes the stale settings.json entry so the new `rtk hook claude` entry
 /// can be registered.
 fn migrate_old_hook_script(ctx: InitContext) {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     if let Some(home) = dirs::home_dir() {
         let old_hook = home
             .join(CLAUDE_DIR)
@@ -1302,7 +1323,9 @@ fn migrate_old_hook_script(ctx: InitContext) {
 /// Remove only legacy `rtk-rewrite.sh` entries from settings.json.
 /// Preserves any existing `rtk hook claude` entries (new format).
 fn remove_legacy_settings_entries(ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let claude_dir = resolve_claude_dir()?;
     let settings_path = claude_dir.join(SETTINGS_JSON);
 
@@ -1380,7 +1403,9 @@ fn remove_legacy_hook_entries_from_json(root: &mut serde_json::Value) -> bool {
 
 /// Generate .rtk/filters.toml template in the current directory if not present.
 fn generate_project_filters_template(ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let rtk_dir = std::path::Path::new(".rtk");
     let path = rtk_dir.join("filters.toml");
 
@@ -1413,7 +1438,9 @@ fn generate_project_filters_template(ctx: InitContext) -> Result<()> {
 
 /// Generate ~/.config/rtk/filters.toml template if not present.
 fn generate_global_filters_template(ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let config_dir = dirs::config_dir().unwrap_or_else(|| std::path::PathBuf::from(".config"));
     let rtk_dir = config_dir.join(crate::core::constants::RTK_DATA_DIR);
     let path = rtk_dir.join("filters.toml");
@@ -1517,7 +1544,9 @@ fn run_hook_only_mode(
 
 /// Legacy mode: full 137-line injection into CLAUDE.md
 fn run_claude_md_mode(global: bool, install_opencode: bool, ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let path = if global {
         resolve_claude_dir()?.join(CLAUDE_MD)
     } else {
@@ -1584,7 +1613,9 @@ const CLINE_RULES: &str = include_str!("../../hooks/cline/rules.md");
 // ─── Cline / Roo Code support ─────────────────────────────────
 
 fn run_cline_mode(ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     // Cline reads .clinerules from the project root (workspace-scoped)
     let rules_path = PathBuf::from(".clinerules");
 
@@ -1628,7 +1659,9 @@ fn run_cline_mode(ctx: InitContext) -> Result<()> {
 }
 
 fn run_windsurf_mode(ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     // Windsurf reads .windsurfrules from the project root (workspace-scoped).
     // Global rules (~/.codeium/windsurf/memories/global_rules.md) are unreliable.
     let rules_path = PathBuf::from(".windsurfrules");
@@ -1681,7 +1714,9 @@ pub fn run_kilocode_mode(ctx: InitContext) -> Result<()> {
 }
 
 fn run_kilocode_mode_at(base_dir: &Path, ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     // Kilo Code reads .kilocode/rules/ from the project root (workspace-scoped)
     let target_dir = base_dir.join(".kilocode/rules");
     let rules_path = target_dir.join("rtk-rules.md");
@@ -1739,7 +1774,9 @@ pub fn run_antigravity_mode(ctx: InitContext) -> Result<()> {
 }
 
 fn run_antigravity_mode_at(base_dir: &Path, ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     // Antigravity reads .agents/rules/ from the project root (workspace-scoped)
     let target_dir = base_dir.join(".agents/rules");
     let rules_path = target_dir.join("antigravity-rtk-rules.md");
@@ -1875,7 +1912,9 @@ pub fn uninstall_hermes(ctx: InitContext) -> Result<()> {
 }
 
 fn uninstall_hermes_at(hermes_home: &Path, ctx: InitContext) -> Result<Vec<String>> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let mut removed = Vec::new();
 
     let plugin_dir = hermes_plugin_dir(hermes_home);
@@ -2499,7 +2538,9 @@ fn write_rtk_block(
 
 /// Patch CLAUDE.md: add @RTK.md, migrate if old block exists
 fn patch_claude_md(path: &Path, ctx: InitContext) -> Result<bool> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let mut content = if path.exists() {
         fs::read_to_string(path)?
     } else {
@@ -2566,7 +2607,9 @@ fn patch_claude_md(path: &Path, ctx: InitContext) -> Result<bool> {
 
 /// Patch AGENTS.md: add @RTK.md (or absolute path), migrate old inline block if present
 fn patch_agents_md(path: &Path, rtk_md_ref: &str, ctx: InitContext) -> Result<bool> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let mut content = if path.exists() {
         fs::read_to_string(path)
             .with_context(|| format!("Failed to read AGENTS.md: {}", path.display()))?
@@ -2659,7 +2702,9 @@ fn has_rtk_reference(content: &str, refs: &[&str]) -> bool {
 }
 
 fn remove_rtk_reference_from_agents(path: &Path, refs: &[&str], ctx: InitContext) -> Result<bool> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     if !path.exists() {
         return Ok(false);
     }
@@ -2869,7 +2914,9 @@ fn ensure_pi_extensions_dir(parent: &Path, name: &str, ctx: InitContext) -> Resu
 /// Mirrors `uninstall_codex` / `uninstall_hermes`: extracted from the dispatcher
 /// so it can be tested and reasoned about independently.
 fn uninstall_pi(global: bool, ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let plugin_path = pi_plugin_path_for_scope(global)?;
     let mut removed: Vec<String> = Vec::new();
 
@@ -2913,6 +2960,7 @@ pub fn run_pi_mode(global: bool, ctx: InitContext) -> Result<()> {
     let InitContext {
         verbose: _,
         dry_run,
+        ..
     } = ctx;
     let plugin_path = if global {
         let pi_dir = resolve_pi_dir()?;
@@ -2985,7 +3033,9 @@ fn ensure_opencode_plugin_installed(path: &Path, ctx: InitContext) -> Result<boo
 
 /// Remove OpenCode plugin file
 fn remove_opencode_plugin(ctx: InitContext) -> Result<Vec<PathBuf>> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let opencode_dir = resolve_opencode_dir()?;
     let path = opencode_plugin_path(&opencode_dir);
     let mut removed = Vec::new();
@@ -3014,7 +3064,9 @@ fn resolve_cursor_dir() -> Result<PathBuf> {
 
 /// Install Cursor hooks: register binary command in hooks.json
 fn install_cursor_hooks(ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let cursor_dir = resolve_cursor_dir()?;
 
     // Migrate old hook script if present
@@ -3068,7 +3120,9 @@ fn install_cursor_hooks(ctx: InitContext) -> Result<()> {
 /// Patch ~/.cursor/hooks.json to add RTK preToolUse hook.
 /// Returns true if the file was modified.
 fn patch_cursor_hooks_json(path: &Path, ctx: InitContext) -> Result<bool> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let mut root = if path.exists() {
         let content = fs::read_to_string(path)
             .with_context(|| format!("Failed to read {}", path.display()))?;
@@ -3176,7 +3230,9 @@ fn insert_cursor_hook_entry(root: &mut serde_json::Value) -> Result<()> {
 /// Remove only legacy `rtk-rewrite.sh` entries from Cursor hooks.json.
 /// Preserves any existing `rtk hook cursor` entries (new format).
 fn remove_legacy_cursor_hooks_json_entries(path: &Path, ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     if !path.exists() {
         return Ok(());
     }
@@ -3238,7 +3294,9 @@ fn remove_legacy_cursor_hook_entries_from_json(root: &mut serde_json::Value) -> 
 
 /// Remove Cursor RTK artifacts: hook script + hooks.json entry
 fn remove_cursor_hooks(ctx: InitContext) -> Result<Vec<String>> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let cursor_dir = resolve_cursor_dir()?;
     let mut removed = Vec::new();
 
@@ -3712,7 +3770,9 @@ fn patch_gemini_settings(
     patch_mode: PatchMode,
     ctx: InitContext,
 ) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let settings_path = gemini_dir.join(SETTINGS_JSON);
     let hook_cmd = hook_path.to_string_lossy().to_string();
 
@@ -3824,7 +3884,9 @@ fn patch_gemini_settings(
 
 /// Remove Gemini artifacts during uninstall
 fn uninstall_gemini(ctx: InitContext) -> Result<Vec<String>> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let mut removed = Vec::new();
     let gemini_dir = match resolve_gemini_dir() {
         Ok(d) => d,
@@ -4065,7 +4127,9 @@ fn build_kimi_hook_table(command: &str) -> toml::Value {
 
 /// Install Kimi CLI hooks: write hook script and register in config.toml.
 fn install_kimi_hooks(ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let kimi_dir = resolve_kimi_dir()?;
     let hooks_dir = kimi_dir.join("hooks");
     let hook_script_path = hooks_dir.join(REWRITE_HOOK_FILE);
@@ -4157,7 +4221,9 @@ fn install_kimi_hooks(ctx: InitContext) -> Result<()> {
 
 /// Uninstall Kimi CLI hooks: remove hook script and deregister from config.toml.
 pub fn uninstall_kimi(ctx: InitContext) -> Result<()> {
-    let InitContext { verbose, dry_run } = ctx;
+    let InitContext {
+        verbose, dry_run, ..
+    } = ctx;
     let kimi_dir = resolve_kimi_dir()?;
     let hooks_dir = kimi_dir.join("hooks");
     let hook_script_path = hooks_dir.join(REWRITE_HOOK_FILE);
@@ -6628,6 +6694,7 @@ mod tests {
                 InitContext {
                     verbose: 0,
                     dry_run: true,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -6658,6 +6725,7 @@ mod tests {
             InitContext {
                 verbose: 0,
                 dry_run: true,
+                ..Default::default()
             },
         );
         std::env::set_current_dir(&cwd).unwrap();
@@ -6690,6 +6758,7 @@ mod tests {
                 InitContext {
                     verbose: 0,
                     dry_run: true,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -6729,6 +6798,7 @@ mod tests {
             InitContext {
                 verbose: 0,
                 dry_run: true,
+                ..Default::default()
             },
         );
         std::env::set_current_dir(&cwd).unwrap();
@@ -6961,6 +7031,7 @@ mod tests {
         let ctx = InitContext {
             verbose: 0,
             dry_run: true,
+            ..Default::default()
         };
         uninstall_copilot_at(temp.path(), ctx).unwrap();
 
@@ -7135,6 +7206,7 @@ mod tests {
         let ctx = InitContext {
             verbose: 0,
             dry_run: true,
+            ..Default::default()
         };
         run_copilot_global_at(temp.path(), ctx).unwrap();
         assert!(!temp.path().join("hooks").join("rtk-rewrite.json").exists());
