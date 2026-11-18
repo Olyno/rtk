@@ -1,5 +1,7 @@
 //! Filters git output — log, status, diff, and more — keeping just the essential info.
 
+use crate::cmds::compact_git_stash_list::filter_git_stash_list as filter_stash_list;
+use crate::cmds::compact_git_worktree_list::filter_git_worktree_list as filter_worktree_list;
 use crate::core::args_utils;
 use crate::core::guard::never_worse;
 use crate::core::stream::{
@@ -1674,27 +1676,6 @@ fn run_stash(
     Ok(0)
 }
 
-fn filter_stash_list(output: &str) -> String {
-    // Format: "stash@{0}: WIP on main: abc1234 commit message"
-    let mut result = Vec::new();
-    for line in output.lines() {
-        if let Some(colon_pos) = line.find(": ") {
-            let index = &line[..colon_pos];
-            let rest = &line[colon_pos + 2..];
-            // Compact: strip "WIP on branch:" prefix if present
-            let message = if let Some(second_colon) = rest.find(": ") {
-                rest[second_colon + 2..].trim()
-            } else {
-                rest.trim()
-            };
-            result.push(format!("{}: {}", index, message));
-        } else {
-            result.push(line.to_string());
-        }
-    }
-    result.join("\n")
-}
-
 fn run_worktree(args: &[String], verbose: u8, global_args: &[String]) -> Result<i32> {
     let timer = tracking::TimedExecution::start();
 
@@ -1766,33 +1747,6 @@ fn run_worktree(args: &[String], verbose: u8, global_args: &[String]) -> Result<
     );
 
     Ok(0)
-}
-
-fn filter_worktree_list(output: &str) -> String {
-    let home = dirs::home_dir()
-        .map(|h| h.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    let mut result = Vec::new();
-    for line in output.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        // Format: "/path/to/worktree  abc1234 [branch]"
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 3 {
-            let mut path = parts[0].to_string();
-            if !home.is_empty() && path.starts_with(&home) {
-                path = format!("~{}", &path[home.len()..]);
-            }
-            let hash = parts[1];
-            let branch = parts[2..].join(" ");
-            result.push(format!("{} {} {}", path, hash, branch));
-        } else {
-            result.push(line.to_string());
-        }
-    }
-    result.join("\n")
 }
 
 /// Runs an unsupported git subcommand by passing it through directly

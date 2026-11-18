@@ -12,3 +12,5 @@ pub mod python;
 pub mod ruby;
 pub mod rust;
 pub mod system;
+pub mod compact_git_stash_list;
+pub mod compact_git_worktree_list;
