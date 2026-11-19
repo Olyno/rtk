@@ -7277,6 +7277,14 @@ mod tests {
     }
 
     #[test]
+    fn test_rewrite_mix_test() {
+        assert_eq!(
+            rewrite_command_no_prefixes("mix test", &[]),
+            Some("rtk mix test".into())
+        );
+    }
+
+    #[test]
     fn test_classify_mvnd_test() {
         assert!(matches!(
             classify_command("mvnd test"),
@@ -7308,6 +7316,14 @@ mod tests {
         assert_eq!(
             rewrite_command_no_prefixes("mvnd.cmd clean install", &[]),
             Some("rtk mvnd clean install".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_mix_compile() {
+        assert_eq!(
+            rewrite_command_no_prefixes("mix compile", &[]),
+            Some("rtk mix compile".into())
         );
     }
 

@@ -6,6 +6,7 @@ pub mod compact_pip_show;
 pub mod compress;
 pub mod dart;
 pub mod dotnet;
+pub mod elixir;
 pub mod git;
 pub mod go;
 pub mod js;

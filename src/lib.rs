@@ -14,6 +14,7 @@ mod parser;
 use cmds::cloud::{aws_cmd, container, curl_cmd, psql_cmd, wget_cmd};
 use cmds::dart::{dart_cmd, flutter_cmd};
 use cmds::dotnet::{binlog, dotnet_cmd, dotnet_format_report, dotnet_trx};
+use cmds::elixir::mix_cmd;
 use cmds::git::{diff_cmd, gh_cmd, git_cmd, glab_cmd, gt_cmd};
 use cmds::go::{go_cmd, golangci_cmd};
 use cmds::js::{
@@ -337,6 +338,13 @@ enum Commands {
     /// Dart commands with compact analyzer, formatter, and test output
     Dart {
         /// Dart arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Mix commands with compact ExUnit, formatter, and compile output
+    Mix {
+        /// Mix arguments
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -2850,6 +2858,8 @@ fn dispatch_command(cli: Cli) -> Result<i32> {
 
         Commands::Dart { args } => dart_cmd::run(&args, cli.verbose)?,
 
+        Commands::Mix { args } => mix_cmd::run(&args, cli.verbose)?,
+
         Commands::Pnpm {
             filter,
             recursive,
@@ -4818,6 +4828,7 @@ mod tests {
             "gt",
             "golangci-lint",
             "gradlew",
+            "mix",
             "mvn",
             "mvnd",
             "sbt",

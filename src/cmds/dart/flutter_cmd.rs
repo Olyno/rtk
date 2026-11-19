@@ -52,7 +52,7 @@ pub(crate) fn run_with_toml_filter(
     verbose: u8,
 ) -> Option<Result<i32>> {
     // Machine-readable JSON reporters must not be line-filtered.
-    if has_json_reporter(args) {
+    if has_json_reporter(args) || toml_filter::toml_disabled() {
         return None;
     }
 
