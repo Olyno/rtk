@@ -45,7 +45,7 @@ Always prefer `rtk <cmd>` when a filter exists. If you need the raw bytes, use `
 - `rtk verify` — validate TOML filter syntax and inline tests.
 
 **Supported ecosystems (prefix with `rtk`)**
-Git / forges, Rust, Go, Node, Python, Ruby, .NET, Gradle, Cloud/Ops (docker, kubectl, aws, curl, wget, psql, mvn), and utilities (`ls`, `tree`, `find`, `wc`, `env`, `grep`, `rg`, `json`, `log`, `err`, `summary`, `smart`, `test`, `run`, `proxy`).
+Git / forges, Rust, Go, Node, Python, Ruby, .NET, Dart/Flutter, Elixir (`mix`), Gradle, Cloud/Ops (docker, kubectl, aws, curl, wget, psql, mvn), and utilities (`ls`, `tree`, `find`, `wc`, `env`, `grep`, `rg`, `json`, `log`, `err`, `summary`, `smart`, `test`, `run`, `proxy`).
 
 **Automation tip**
 - `rtk run <cmd>` auto-routes recognized commands to the right filter, so you can default to it when unsure.

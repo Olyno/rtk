@@ -95,6 +95,8 @@ Always prefer `rtk <cmd>` when a filter exists. If you need the raw bytes, use `
 - **Ruby**: `rake`, `rspec`, `rubocop`.
 - **.NET**: `dotnet`.
 - **Mobile**: `gradlew`.
+- **Dart / Flutter**: `dart test/analyze/format`, `flutter test/analyze`.
+- **Elixir**: `mix test/compile/format`.
 - **Cloud / ops**: `docker`, `kubectl`, `oc`, `aws`, `curl`, `wget`, `psql`, `mvn`.
 - **Utilities**: `ls`, `tree`, `find`, `wc`, `env`, `grep`, `rg`, `json`, `log`, `err`, `summary`, `smart`, `test`, `run`, `proxy`.
 - **Automation**: `rtk run <cmd>` auto-routes recognized commands to the right filter, so you can default to it when unsure; `rtk proxy <cmd>` always runs raw.
@@ -113,7 +115,7 @@ For the full architecture, component details, and module development patterns, s
 
 Module responsibilities are documented in each folder's `README.md` and each file's `//!` doc header. Browse `src/cmds/*/` to discover available filters.
 
-Supported ecosystems: git/gh/gt, cargo, go/golangci-lint, npm/pnpm/npx, ruff/pytest/pip/mypy, rspec/rubocop/rake, dotnet, playwright/vitest/jest, docker/kubectl/aws, gradlew/mvn, php/artisan/phpunit/phpstan/pest.
+Supported ecosystems: git/gh/gt, cargo, go/golangci-lint, npm/pnpm/npx, ruff/pytest/pip/mypy, rspec/rubocop/rake, dotnet, playwright/vitest/jest, docker/kubectl/aws, gradlew/mvn, php/artisan/phpunit/phpstan/pest, dart/flutter, elixir/mix.
 
 ### Bypass Mode
 
