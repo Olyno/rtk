@@ -2563,6 +2563,32 @@ fn run_cli() -> Result<i32> {
         hooks::integrity::runtime_check()?;
     }
 
+    dispatch_command(cli)
+}
+
+/// Route `rtk run <cmd> ...` to the matching specialized filter when the
+/// inner command is a recognized RTK subcommand (`rtk run git status` →
+/// `rtk git status`). Returns `None` for empty, unparseable, or run-wrapping
+/// invocations, which keep raw execution.
+fn try_route_run(command: Option<&str>, args: &[String]) -> Option<Cli> {
+    let mut tokens = vec!["rtk".to_string()];
+    if let Some(c) = command {
+        tokens.extend(shell_split(c));
+    } else {
+        tokens.extend(args.iter().cloned());
+    }
+    if tokens.len() <= 1 {
+        return None;
+    }
+    let nested = try_parse_cli_from(&tokens).ok()?;
+    if matches!(nested.command, Commands::Run { .. }) {
+        return None;
+    }
+    Some(nested)
+}
+
+/// Execute a parsed command, returning the process exit code.
+fn dispatch_command(cli: Cli) -> Result<i32> {
     let code = match cli.command {
         Commands::Ls { args } => ls::run(&args, cli.verbose)?,
 
@@ -3771,6 +3797,11 @@ fn run_cli() -> Result<i32> {
             shell,
             args,
         } => {
+            // Auto-route to the specialized filter when the inner command is
+            // recognized; everything shell-like falls through to raw exec.
+            if let Some(nested) = try_route_run(command.as_deref(), &args) {
+                return dispatch_command(nested);
+            }
             if command
                 .as_deref()
                 .is_none_or(|script| script.trim().is_empty())
@@ -4075,6 +4106,7 @@ fn is_operational_command(cmd: &Commands) -> bool {
             | Commands::Psql { .. }
             | Commands::Pnpm { .. }
             | Commands::Err { .. }
+            | Commands::Run { .. }
             | Commands::Test { .. }
             | Commands::Json { .. }
             | Commands::Deps { .. }
@@ -6033,5 +6065,81 @@ mod tests {
             } => assert_eq!(args, vec!["main.ts"]),
             _ => panic!("Expected Deno Compile command"),
         }
+    }
+
+    // --- try_route_run auto-routing ---
+
+    #[test]
+    fn test_run_routes_git_status() {
+        let routed = try_route_run(Some("git status"), &[]);
+        assert!(routed.is_some());
+        assert!(matches!(
+            routed.unwrap().command,
+            Commands::Git {
+                command: GitCommands::Status { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_run_routes_docker_ps() {
+        let routed = try_route_run(None, &["docker".into(), "ps".into()]);
+        assert!(matches!(
+            routed.unwrap().command,
+            Commands::Docker {
+                command: DockerCommands::Ps { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_run_routes_dotnet_test() {
+        let routed = try_route_run(None, &["dotnet".into(), "test".into()]);
+        assert!(matches!(
+            routed.unwrap().command,
+            Commands::Dotnet {
+                command: DotnetCommands::Test { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_run_routes_cargo_test() {
+        let routed = try_route_run(None, &["cargo".into(), "test".into()]);
+        assert!(matches!(
+            routed.unwrap().command,
+            Commands::Cargo {
+                command: CargoCommands::Test { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_run_routes_npm_install() {
+        let routed = try_route_run(None, &["npm".into(), "install".into()]);
+        assert!(matches!(routed.unwrap().command, Commands::Npm { .. }));
+    }
+
+    #[test]
+    fn test_run_avoids_recursion() {
+        // `rtk run run echo` must not route back to Run.
+        let routed = try_route_run(None, &["run".into(), "echo".into()]);
+        assert!(routed.is_none());
+    }
+
+    #[test]
+    fn test_run_unknown_command_no_route() {
+        let routed = try_route_run(None, &["echo".into(), "hello".into()]);
+        assert!(routed.is_none());
+    }
+
+    #[test]
+    fn test_run_empty_no_route() {
+        let routed = try_route_run(None, &[]);
+        assert!(routed.is_none());
     }
 }
