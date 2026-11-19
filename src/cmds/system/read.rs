@@ -10,9 +10,11 @@ use std::fs;
 use std::io::{self, Read as IoRead, Write};
 use std::path::Path;
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     file: &Path,
     level: FilterLevel,
+    mode: crate::ReadMode,
     max_lines: Option<usize>,
     head_lines: Option<usize>,
     tail_lines: Option<usize>,
@@ -40,7 +42,8 @@ pub fn run(
     // `head -n N` stops as soon as it has N lines. Reading the file whole first gives the same
     // answer on a regular file and no answer at all on a device node or a FIFO nobody closes,
     // which is reachable now that `head -n N` rewrites to this.
-    if level == FilterLevel::None
+    if mode == crate::ReadMode::Full
+        && level == FilterLevel::None
         && !line_numbers
         && let Some(head) = head_lines
     {
@@ -59,14 +62,17 @@ pub fn run(
     // Read file content
     let bytes =
         fs::read(file).with_context(|| format!("Failed to read file: {}", file.display()))?;
-    if let Some(window) = raw_byte_window(
-        &bytes,
-        level,
-        max_lines,
-        head_lines,
-        tail_lines,
-        line_numbers,
-    ) {
+    let window = (mode == crate::ReadMode::Full).then(|| {
+        raw_byte_window(
+            &bytes,
+            level,
+            max_lines,
+            head_lines,
+            tail_lines,
+            line_numbers,
+        )
+    });
+    if let Some(Some(window)) = window {
         io::stdout()
             .lock()
             .write_all(window)
@@ -90,19 +96,29 @@ pub fn run(
         eprintln!("Detected language: {:?}", lang);
     }
 
-    // Apply filter
-    let filter = filter::get_filter(level);
-    let mut filtered = filter.filter(&content, &lang);
+    // Signature/map modes bypass the boilerplate filter: they are their own,
+    // regex-based structural view of the file.
+    let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let mut filtered = match mode {
+        crate::ReadMode::Signatures => crate::core::signatures::extract_signatures(&content, ext),
+        crate::ReadMode::Map => crate::core::signatures::extract_map(&content, ext),
+        crate::ReadMode::Full => {
+            // Apply filter
+            let filter = filter::get_filter(level);
+            let mut filtered = filter.filter(&content, &lang);
 
-    // Safety: if filter emptied a non-empty file, fall back to raw content
-    if filtered.trim().is_empty() && !content.trim().is_empty() {
-        eprintln!(
-            "rtk: warning: filter produced empty output for {} ({} bytes), showing raw content",
-            file.display(),
-            content.len()
-        );
-        filtered = content.clone();
-    }
+            // Safety: if filter emptied a non-empty file, fall back to raw content
+            if filtered.trim().is_empty() && !content.trim().is_empty() {
+                eprintln!(
+                    "rtk: warning: filter produced empty output for {} ({} bytes), showing raw content",
+                    file.display(),
+                    content.len()
+                );
+                filtered = content.clone();
+            }
+            filtered
+        }
+    };
 
     if verbose > 0 {
         let original_lines = content.lines().count();
@@ -553,6 +569,7 @@ fn main() {{
         run(
             file.path(),
             FilterLevel::Minimal,
+            crate::ReadMode::Full,
             None,
             None,
             None,

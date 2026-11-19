@@ -37,6 +37,17 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+/// Read mode for `rtk read --mode <mode>`.
+#[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
+pub enum ReadMode {
+    /// Full file content (default)
+    Full,
+    /// Function/method/class signatures only
+    Signatures,
+    /// Signatures + imports (structural overview)
+    Map,
+}
+
 /// Target agent for hook installation.
 #[derive(Debug, Clone, Copy, PartialEq, ValueEnum)]
 pub enum AgentTarget {
@@ -216,6 +227,10 @@ enum Commands {
         /// Show line numbers
         #[arg(short = 'n', long)]
         line_numbers: bool,
+        /// Read mode: full (default), signatures (functions/classes only), map
+        /// (signatures + imports)
+        #[arg(long, default_value = "full")]
+        mode: ReadMode,
     },
 
     /// Generate 2-line technical summary (heuristic-based)
@@ -2561,6 +2576,7 @@ fn run_cli() -> Result<i32> {
             head_lines,
             tail_lines,
             line_numbers,
+            mode,
         } => {
             let mut had_error = false;
             let mut stdin_seen = false;
@@ -2583,6 +2599,7 @@ fn run_cli() -> Result<i32> {
                     read::run(
                         file,
                         level,
+                        mode,
                         max_lines,
                         head_lines,
                         tail_lines,
