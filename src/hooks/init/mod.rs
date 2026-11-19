@@ -2706,6 +2706,29 @@ level = "high"
     }
 
     #[test]
+    fn test_compress_writes_markdown_names_only() {
+        let temp = TempDir::new().unwrap();
+        let md = temp.path().join("RTK.md");
+        let txt = temp.path().join("notes.txt");
+        let body = "**Bold** **text**\n\n\n\nFor example, done\n";
+        let ctx = InitContext {
+            compress: true,
+            ..Default::default()
+        };
+        write_if_changed(&md, body, "RTK.md", ctx).unwrap();
+        write_if_changed(&txt, body, "notes.txt", ctx).unwrap();
+
+        let md_out = fs::read_to_string(&md).unwrap();
+        assert!(!md_out.contains("**"), "bold stripped: {md_out}");
+        assert!(md_out.contains("e.g."), "shorthand applied: {md_out}");
+        assert_eq!(
+            fs::read_to_string(&txt).unwrap(),
+            body,
+            "non-.md names stay verbatim under --compress"
+        );
+    }
+
+    #[test]
     fn test_write_if_changed_dry_run_does_not_modify_existing_file() {
         let temp = TempDir::new().unwrap();
         let target = temp.path().join("rtk-test.md");
