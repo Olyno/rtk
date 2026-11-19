@@ -4218,8 +4218,15 @@ fn run_stash(
 
 fn filter_stash_list(output: &str) -> String {
     // Format: "stash@{0}: WIP on main: abc1234 commit message"
+    const MAX_MSG_LEN: usize = 60;
+    const MAX_LINE_LEN: usize = 100;
+
     let mut result = Vec::new();
     for line in output.lines() {
+        let line = line.trim_end();
+        if line.trim().is_empty() {
+            continue;
+        }
         if let Some(colon_pos) = line.find(": ") {
             let index = &line[..colon_pos];
             let rest = &line[colon_pos + 2..];
@@ -4229,9 +4236,13 @@ fn filter_stash_list(output: &str) -> String {
             } else {
                 rest.trim()
             };
-            result.push(format!("{}: {}", index, message));
+            result.push(format!(
+                "{}: {}",
+                index,
+                truncate_line(message, MAX_MSG_LEN)
+            ));
         } else {
-            result.push(line.to_string());
+            result.push(truncate_line(line, MAX_LINE_LEN));
         }
     }
     result.join("\n")
@@ -4451,21 +4462,72 @@ fn filter_worktree_list(output: &str) -> String {
         if line.trim().is_empty() {
             continue;
         }
-        // Format: "/path/to/worktree  abc1234 [branch]"
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 3 {
-            let mut path = parts[0].to_string();
-            if !home.is_empty() && path.starts_with(&home) {
-                path = format!("~{}", &path[home.len()..]);
+        // Format: "/path/to/worktree abc1234 [branch]" (git splits the fields
+        // with one space since 2.47, two before). Locate the short-SHA token:
+        // everything before it is the path (spaces included), everything after
+        // is the branch tail.
+        let trimmed = line.trim();
+        let Some((path, hash, tail)) = split_worktree_fields(trimmed) else {
+            result.push(trimmed.to_string());
+            continue;
+        };
+
+        let mut path = path.to_string();
+        if !home.is_empty() && path.starts_with(&home) {
+            path = format!("~{}", &path[home.len()..]);
+        }
+
+        // Drop a "[branch]" tail already implied by the directory basename;
+        // keep "(detached)" and anything else git reported.
+        let tail = if let Some(branch) = tail.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
+            let base = path
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or(&path)
+                .to_ascii_lowercase();
+            let branch = branch.to_ascii_lowercase();
+            if branch == base {
+                String::new()
+            } else {
+                format!("[{}]", branch)
             }
-            let hash = parts[1];
-            let branch = parts[2..].join(" ");
-            result.push(format!("{} {} {}", path, hash, branch));
         } else {
-            result.push(line.to_string());
+            tail.to_string()
+        };
+
+        if tail.is_empty() {
+            result.push(format!("{} {}", path, hash));
+        } else {
+            result.push(format!("{} {} {}", path, hash, tail));
         }
     }
     result.join("\n")
+}
+
+/// Split `git worktree list` line into (path, sha, tail) by locating the
+/// short-SHA token — a 7..=40 char run of hex not at the start. Returns
+/// `None` when no such token exists (garbage or a header line).
+fn split_worktree_fields(line: &str) -> Option<(&str, &str, &str)> {
+    let mut offset = 0;
+    let mut after_hash = line.len();
+    let mut hash: Option<(&str, &str)> = None;
+    for (i, token) in line.split_whitespace().enumerate() {
+        let start = offset + line[offset..].find(token)?;
+        let end = start + token.len();
+        if i > 0
+            && token.len() >= 7
+            && token.len() <= 40
+            && token.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            hash = Some((line[..start].trim_end(), token));
+            after_hash = end;
+            break;
+        }
+        offset = end;
+    }
+    let (path, hash) = hash?;
+    Some((path, hash, line[after_hash..].trim()))
 }
 
 /// True when `git ls-tree` with `args` prints a plain path list: `--name-only` (or its alias
@@ -5937,6 +5999,23 @@ mod tests {
     }
 
     #[test]
+    fn test_filter_stash_list_truncates_long_message() {
+        let long = "x".repeat(200);
+        let result = filter_stash_list(&format!("stash@{{0}}: On main: abc1234 {long}"));
+        let msg = result.strip_prefix("stash@{0}: ").expect("index kept");
+        assert_eq!(msg.chars().count(), 60);
+        assert!(msg.ends_with("..."));
+    }
+
+    #[test]
+    fn test_filter_stash_list_caps_unmatched_line() {
+        let long = "y".repeat(300);
+        let result = filter_stash_list(&long);
+        assert_eq!(result.chars().count(), 100);
+        assert!(result.ends_with("..."));
+    }
+
+    #[test]
     fn test_parse_stash_stat_strips_decorations() {
         let raw = " del.md   |   2 --\n keep.md  |   5 ++++-\n logo.bin | Bin 0 -> 1024 bytes\n \
                    new.rs   |  40 ++++++++\n 4 files changed, 44 insertions(+), 3 deletions(-)\n";
@@ -6070,6 +6149,25 @@ mod tests {
         assert!(result.contains("abc1234"));
         assert!(result.contains("[main]"));
         assert!(result.contains("[feature]"));
+    }
+
+    #[test]
+    fn test_filter_worktree_list_drops_redundant_branch_and_handles_247_spacing() {
+        // git >= 2.47 separates fields with a single space; a branch equal to
+        // the directory basename is redundant, "(detached)" is not.
+        let output =
+            "/home/u/repos/rtk-next abc1234 [rtk-next]\n/home/u/repos/x def5678 (detached)\n";
+        let result = filter_worktree_list(output);
+        assert_eq!(
+            result,
+            "/home/u/repos/rtk-next abc1234\n/home/u/repos/x def5678 (detached)"
+        );
+    }
+
+    #[test]
+    fn test_filter_worktree_list_passthrough_on_unparsable_line() {
+        let output = "not a worktree line\n";
+        assert_eq!(filter_worktree_list(output), "not a worktree line");
     }
 
     #[test]

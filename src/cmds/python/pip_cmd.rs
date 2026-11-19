@@ -142,11 +142,11 @@ fn run_show(base_cmd: &str, args: &[String], verbose: u8) -> Result<(String, Str
         eprintln!("Running: {} pip show {}", base_cmd, args.join(" "));
     }
 
-    let result = exec_capture(&mut cmd)
-        .with_context(|| format!("Failed to run {} pip show", base_cmd))?;
+    let result =
+        exec_capture(&mut cmd).with_context(|| format!("Failed to run {} pip show", base_cmd))?;
 
     let raw = format!("{}\n{}", result.stdout, result.stderr);
-    let filtered = never_worse(&raw, &filter_pip_show(&result.stdout)).to_string();
+    let filtered = crate::core::redact::redact(never_worse(&raw, &filter_pip_show(&result.stdout)));
     println!("{}", filtered);
 
     Ok((raw, filtered, result.exit_code))

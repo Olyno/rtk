@@ -171,7 +171,17 @@ fn run_filtered(
         opts = opts.inherit_stdin();
     }
 
-    runner::run_filtered(cmd, name, &args_display, filter_npm_output, opts)
+    // `npm list`/`ls` prints a dependency tree: flatten it to top-level
+    // packages instead of the line noise filter meant for script output.
+    let is_list =
+        name == "npm" && matches!(args.first().map(String::as_str), Some("list") | Some("ls"));
+    let filter: fn(&str) -> String = if is_list {
+        crate::cmds::compact_npm_list::filter_npm_list
+    } else {
+        filter_npm_output
+    };
+
+    runner::run_filtered(cmd, name, &args_display, filter, opts)
 }
 
 /// Filter npm run output - strip boilerplate, progress bars, npm WARN
