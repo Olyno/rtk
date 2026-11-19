@@ -63,10 +63,8 @@ impl SymbolKind {
 
 impl CodeIndex {
     pub fn open(base_path: &Path) -> Result<Self> {
-        let data_dir = dirs::data_dir()
-            .or_else(|| dirs::home_dir().map(|h| h.join(".local/share")))
+        let data_dir = crate::core::user_dirs::data()
             .context("Cannot determine data directory")?
-            .join("rtk")
             .join("index");
         std::fs::create_dir_all(&data_dir)?;
 
@@ -257,17 +255,25 @@ fn detect_language_from_path(file: &str) -> String {
 }
 
 fn extract_rust(lines: &[&str], file: &str, out: &mut Vec<Symbol>) {
-    lazy_static::lazy_static! {
-        static ref RE_FN: Regex = Regex::new(r"^\s*(pub\s+)?(async\s+)?(unsafe\s+)?fn\s+(\w+)").unwrap();
-        static ref RE_STRUCT: Regex = Regex::new(r"^\s*(pub\s+)?struct\s+(\w+)").unwrap();
-        static ref RE_TRAIT: Regex = Regex::new(r"^\s*(pub\s+)?trait\s+(\w+)").unwrap();
-        static ref RE_ENUM: Regex = Regex::new(r"^\s*(pub\s+)?enum\s+(\w+)").unwrap();
-        static ref RE_IMPL: Regex = Regex::new(r"^\s*impl(?:\s+<[^>]+>)?\s+(\w+)").unwrap();
-        static ref RE_MOD: Regex = Regex::new(r"^\s*(pub\s+)?mod\s+(\w+)").unwrap();
-        static ref RE_USE: Regex = Regex::new(r"^\s*use\s+([^;]+);").unwrap();
-        static ref RE_CONST: Regex = Regex::new(r"^\s*(pub\s+)?const\s+(\w+)").unwrap();
-        static ref RE_TYPE: Regex = Regex::new(r"^\s*(pub\s+)?type\s+(\w+)").unwrap();
-    }
+    static RE_FN: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(r"^\s*(pub\s+)?(async\s+)?(unsafe\s+)?fn\s+(\w+)").unwrap()
+    });
+    static RE_STRUCT: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*(pub\s+)?struct\s+(\w+)").unwrap());
+    static RE_TRAIT: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*(pub\s+)?trait\s+(\w+)").unwrap());
+    static RE_ENUM: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*(pub\s+)?enum\s+(\w+)").unwrap());
+    static RE_IMPL: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*impl(?:\s+<[^>]+>)?\s+(\w+)").unwrap());
+    static RE_MOD: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*(pub\s+)?mod\s+(\w+)").unwrap());
+    static RE_USE: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*use\s+([^;]+);").unwrap());
+    static RE_CONST: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*(pub\s+)?const\s+(\w+)").unwrap());
+    static RE_TYPE: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*(pub\s+)?type\s+(\w+)").unwrap());
 
     for (i, line) in lines.iter().enumerate() {
         let line_num = i + 1;
@@ -348,11 +354,12 @@ fn extract_rust(lines: &[&str], file: &str, out: &mut Vec<Symbol>) {
 }
 
 fn extract_python(lines: &[&str], file: &str, out: &mut Vec<Symbol>) {
-    lazy_static::lazy_static! {
-        static ref RE_DEF: Regex = Regex::new(r"^(\s*)def\s+(\w+)").unwrap();
-        static ref RE_CLASS: Regex = Regex::new(r"^(\s*)class\s+(\w+)").unwrap();
-        static ref RE_IMPORT: Regex = Regex::new(r"^\s*(import|from)\s+([^;]+)").unwrap();
-    }
+    static RE_DEF: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^(\s*)def\s+(\w+)").unwrap());
+    static RE_CLASS: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^(\s*)class\s+(\w+)").unwrap());
+    static RE_IMPORT: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*(import|from)\s+([^;]+)").unwrap());
 
     for (i, line) in lines.iter().enumerate() {
         let line_num = i + 1;
@@ -385,13 +392,17 @@ fn extract_python(lines: &[&str], file: &str, out: &mut Vec<Symbol>) {
 }
 
 fn extract_js_ts(lines: &[&str], file: &str, out: &mut Vec<Symbol>) {
-    lazy_static::lazy_static! {
-        static ref RE_FN: Regex = Regex::new(r"^\s*(export\s+)?(async\s+)?function\s+(\w+)").unwrap();
-        static ref RE_ARROW: Regex = Regex::new(r"^\s*(export\s+)?const\s+(\w+)\s*=").unwrap();
-        static ref RE_CLASS: Regex = Regex::new(r"^\s*(export\s+)?class\s+(\w+)").unwrap();
-        static ref RE_INTERFACE: Regex = Regex::new(r"^\s*(export\s+)?interface\s+(\w+)").unwrap();
-        static ref RE_IMPORT: Regex = Regex::new(r"^\s*import\s+[^;]+").unwrap();
-    }
+    static RE_FN: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(r"^\s*(export\s+)?(async\s+)?function\s+(\w+)").unwrap()
+    });
+    static RE_ARROW: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*(export\s+)?const\s+(\w+)\s*=").unwrap());
+    static RE_CLASS: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*(export\s+)?class\s+(\w+)").unwrap());
+    static RE_INTERFACE: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*(export\s+)?interface\s+(\w+)").unwrap());
+    static RE_IMPORT: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*import\s+[^;]+").unwrap());
 
     for (i, line) in lines.iter().enumerate() {
         let line_num = i + 1;
@@ -440,11 +451,12 @@ fn extract_js_ts(lines: &[&str], file: &str, out: &mut Vec<Symbol>) {
 }
 
 fn extract_go(lines: &[&str], file: &str, out: &mut Vec<Symbol>) {
-    lazy_static::lazy_static! {
-        static ref RE_FN: Regex = Regex::new(r"^\s*func\s+(?:\([^)]+\)\s+)?(\w+)").unwrap();
-        static ref RE_TYPE: Regex = Regex::new(r"^\s*type\s+(\w+)").unwrap();
-        static ref RE_IMPORT: Regex = Regex::new(r"^\s*import\s+").unwrap();
-    }
+    static RE_FN: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*func\s+(?:\([^)]+\)\s+)?(\w+)").unwrap());
+    static RE_TYPE: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*type\s+(\w+)").unwrap());
+    static RE_IMPORT: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*import\s+").unwrap());
 
     for (i, line) in lines.iter().enumerate() {
         let line_num = i + 1;
@@ -477,11 +489,13 @@ fn extract_go(lines: &[&str], file: &str, out: &mut Vec<Symbol>) {
 }
 
 fn extract_c_cpp(lines: &[&str], file: &str, out: &mut Vec<Symbol>) {
-    lazy_static::lazy_static! {
-        static ref RE_FN: Regex = Regex::new(r"^\s*(?:[\w*]+\s+)+(\w+)\s*\([^)]*\)\s*\{").unwrap();
-        static ref RE_STRUCT: Regex = Regex::new(r"^\s*(typedef\s+)?struct\s+(\w+)").unwrap();
-        static ref RE_INCLUDE: Regex = Regex::new(r"^\s*#include\s+.*").unwrap();
-    }
+    static RE_FN: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(r"^\s*(?:[\w*]+\s+)+(\w+)\s*\([^)]*\)\s*\{").unwrap()
+    });
+    static RE_STRUCT: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*(typedef\s+)?struct\s+(\w+)").unwrap());
+    static RE_INCLUDE: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"^\s*#include\s+.*").unwrap());
 
     for (i, line) in lines.iter().enumerate() {
         let line_num = i + 1;

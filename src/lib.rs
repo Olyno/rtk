@@ -5,6 +5,7 @@ mod discover;
 #[cfg(feature = "example-plugins")]
 mod example_plugins;
 mod hooks;
+mod index;
 mod learn;
 mod llm_proxy;
 mod parser;
@@ -784,6 +785,16 @@ enum Commands {
     LlmProxy {
         #[command(subcommand)]
         command: Box<llm_proxy::LlmProxySubcommand>,
+    },
+
+    /// Index project files and code symbols (frecency + outline cache)
+    Index {
+        /// Path to index (default: current directory)
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Show index statistics after scanning
+        #[arg(short, long)]
+        stats: bool,
     },
 
     /// Learn CLI corrections from Claude Code error history
@@ -3545,6 +3556,28 @@ fn dispatch_command(cli: Cli) -> Result<i32> {
 
         Commands::LlmProxy { command } => {
             llm_proxy::run(&command)?;
+            0
+        }
+
+        Commands::Index { path, stats } => {
+            let mut idx = index::ProjectIndex::open(&path)?;
+            eprintln!("rtk index: scanning {:?} ...", path);
+            let (file_count, symbol_count) = idx.scan()?;
+            println!("Indexed {} files, {} symbols", file_count, symbol_count);
+            if stats {
+                if let Ok(breakdown) = idx.files.language_breakdown() {
+                    println!("\nLanguages:");
+                    for (lang, count) in breakdown {
+                        println!("  {}: {}", lang, count);
+                    }
+                }
+                if let Ok(code_stats) = idx.code.stats() {
+                    println!("\nSymbols:");
+                    for (kind, count) in code_stats {
+                        println!("  {}: {}", kind, count);
+                    }
+                }
+            }
             0
         }
 

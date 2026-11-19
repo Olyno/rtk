@@ -49,10 +49,10 @@ impl ProjectIndex {
             if entry.size > 500_000 {
                 continue;
             }
-            if let Ok(content) = std::fs::read_to_string(&full) {
-                if let Ok(n) = self.code.scan_file(rel, &content) {
-                    symbol_count += n;
-                }
+            if let Ok(content) = std::fs::read_to_string(&full)
+                && let Ok(n) = self.code.scan_file(rel, &content)
+            {
+                symbol_count += n;
             }
         }
 

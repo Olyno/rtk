@@ -31,10 +31,8 @@ pub struct FileEntry {
 
 impl FileIndex {
     pub fn open(base_path: &Path) -> Result<Self> {
-        let data_dir = dirs::data_dir()
-            .or_else(|| dirs::home_dir().map(|h| h.join(".local/share")))
+        let data_dir = crate::core::user_dirs::data()
             .context("Cannot determine data directory")?
-            .join("rtk")
             .join("index");
         std::fs::create_dir_all(&data_dir)?;
 

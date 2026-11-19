@@ -13,6 +13,7 @@ pub const RTK_META_COMMANDS: &[&str] = &[
     "gain",
     "discover",
     "learn",
+    "index",
     "init",
     "config",
     "bypass",
