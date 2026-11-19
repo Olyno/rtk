@@ -22,7 +22,7 @@ pub fn emit_guarded(filtered: &str, hint: Option<&str>, raw: &str) -> String {
 /// [`emit_guarded`], with the guard waived when `raw` is one of `clean_outputs`
 /// (see [`guard_stdout`]).
 fn emit(filtered: &str, hint: Option<&str>, raw: &str, clean_outputs: &[&str]) -> String {
-    let shown = guarded_output(filtered, hint, raw, clean_outputs);
+    let shown = crate::core::redact::redact(&guarded_output(filtered, hint, raw, clean_outputs));
     print!("{}", shown);
     shown
 }
@@ -313,10 +313,10 @@ where
 
     if opts.skip_filter_on_failure && exit_code != 0 {
         if !result.raw_stdout.trim().is_empty() {
-            print!("{}", result.raw_stdout);
+            print!("{}", crate::core::redact::redact(&result.raw_stdout));
         }
         if !result.raw_stderr.trim().is_empty() {
-            eprint!("{}", result.raw_stderr);
+            eprint!("{}", crate::core::redact::redact(&result.raw_stderr));
         }
         timer.track(cmd_label, &format!("rtk {}", cmd_label), raw, raw);
         return Ok(exit_code);
@@ -342,7 +342,11 @@ where
     } else if opts.no_trailing_newline {
         // The filters that opt out own their line endings: what they return is already
         // exactly what the command would have printed, terminator included.
-        let guarded = guard_stdout(raw_for_tracking, &filtered, opts.clean_outputs).to_string();
+        let guarded = crate::core::redact::redact(guard_stdout(
+            raw_for_tracking,
+            &filtered,
+            opts.clean_outputs,
+        ));
         print!("{}", guarded);
         guarded
     } else {
@@ -360,7 +364,7 @@ where
         })
     });
     if let Some(text) = &forwarded {
-        eprint!("{}", text);
+        eprint!("{}", crate::core::redact::redact(text));
     }
 
     // Forwarded stderr reaches the user just as much as stdout does, so counting only

@@ -24,9 +24,11 @@ pub mod pipeline_log;
 pub mod pipeline_remote;
 #[cfg(feature = "engine")]
 pub mod plugins_cmd;
+pub mod redact;
 pub mod retriever;
 pub mod runner;
 pub mod shell;
+pub mod signatures;
 pub mod stream;
 #[cfg(feature = "engine")]
 pub mod task_cmd;
