@@ -5,6 +5,32 @@
 //! Used by `rtk init --compress` when writing instruction files.
 
 use regex::Regex;
+use std::sync::LazyLock;
+
+static BOLD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\*\*(.+?)\*\*").unwrap());
+static ITALIC: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\*(.+?)\*").unwrap());
+static INLINE_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`]+)`").unwrap());
+static BLANK_RUNS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
+
+/// Verbose phrase → shorthand, applied in order.
+static SHORTHANDS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
+    [
+        (r"(?i)\bfor example\b", "e.g."),
+        (r"(?i)\bthat is\b", "i.e."),
+        (r"(?i)\bin order to\b", "to"),
+        (r"(?i)\bmake sure to\b", ""),
+        (r"(?i)\bplease note that\b", ""),
+        (r"(?i)\bit is important to\b", ""),
+        (r"(?i)\byou should\b", ""),
+        (r"(?i)\bdo not\b", "don't"),
+        (r"(?i)\bwill not\b", "won't"),
+        (r"(?i)\bcannot\b", "can't"),
+        (r"(?i)\bis not\b", "isn't"),
+    ]
+    .into_iter()
+    .map(|(pat, repl)| (Regex::new(pat).unwrap(), repl))
+    .collect()
+});
 
 /// Compress a markdown document with the deterministic compressor.
 ///
@@ -44,50 +70,21 @@ fn compress_markdown_deterministic(text: &str) -> String {
 }
 
 fn strip_formatting(line: &str) -> String {
-    let mut out = line.to_string();
-    out = Regex::new(r"\*\*(.+?)\*\*")
-        .unwrap()
-        .replace_all(&out, "$1")
-        .to_string();
-    out = Regex::new(r"\*(.+?)\*")
-        .unwrap()
-        .replace_all(&out, "$1")
-        .to_string();
-    out = Regex::new(r"`([^`]+)`")
-        .unwrap()
-        .replace_all(&out, "$1")
-        .to_string();
-    out
+    let out = BOLD.replace_all(line, "$1");
+    let out = ITALIC.replace_all(&out, "$1");
+    INLINE_CODE.replace_all(&out, "$1").to_string()
 }
 
 fn shorthand(line: &str) -> String {
     let mut out = line.to_string();
-    let replacements: &[(&str, &str)] = &[
-        (r"(?i)\bfor example\b", "e.g."),
-        (r"(?i)\bthat is\b", "i.e."),
-        (r"(?i)\bin order to\b", "to"),
-        (r"(?i)\bmake sure to\b", ""),
-        (r"(?i)\bplease note that\b", ""),
-        (r"(?i)\bit is important to\b", ""),
-        (r"(?i)\byou should\b", ""),
-        (r"(?i)\bdo not\b", "don't"),
-        (r"(?i)\bdo not\b", "don't"),
-        (r"(?i)\bwill not\b", "won't"),
-        (r"(?i)\bcannot\b", "can't"),
-        (r"(?i)\bis not\b", "isn't"),
-    ];
-    for (pat, repl) in replacements {
-        out = Regex::new(pat)
-            .unwrap()
-            .replace_all(&out, *repl)
-            .to_string();
+    for (pat, repl) in SHORTHANDS.iter() {
+        out = pat.replace_all(&out, *repl).to_string();
     }
     out
 }
 
 fn collapse_blanks(text: &str) -> String {
-    let re = Regex::new(r"\n{3,}").unwrap();
-    re.replace_all(text, "\n\n").to_string()
+    BLANK_RUNS.replace_all(text, "\n\n").to_string()
 }
 
 #[cfg(test)]

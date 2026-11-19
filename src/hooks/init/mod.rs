@@ -152,6 +152,9 @@ pub enum PatchResult {
 pub struct InitContext {
     pub verbose: u8,
     pub dry_run: bool,
+    /// `--compress`: run generated instruction files (`.md`) through the
+    /// deterministic compressor before writing, cutting their token cost.
+    pub compress: bool,
     /// `awareness.level` from config.toml. Agents with a command hook receive the matching
     /// awareness file; agents without a hook always receive `full` (see `print_instructions_agents_awareness_note`).
     pub awareness: AwarenessLevel,
@@ -609,8 +612,16 @@ fn write_if_changed_internal(
     allow_read_error: bool,
 ) -> Result<bool> {
     let InitContext {
-        verbose, dry_run, ..
+        verbose,
+        dry_run,
+        compress,
+        ..
     } = ctx;
+    let content = if compress && name.ends_with(".md") {
+        &crate::cmds::compress::compress_markdown(content)
+    } else {
+        content
+    };
     if path.exists() {
         let existing = match fs::read_to_string(path) {
             Ok(existing) => existing,

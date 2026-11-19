@@ -557,6 +557,10 @@ enum Commands {
         /// Preview changes without writing any files (combine with -v to show content)
         #[arg(long = "dry-run", conflicts_with = "show")]
         dry_run: bool,
+        /// Compress generated instruction files with the deterministic
+        /// markdown compressor (fewer tokens in agent context)
+        #[arg(long)]
+        compress: bool,
     },
 
     /// Download with compact output (strips progress bars)
@@ -3079,10 +3083,14 @@ fn dispatch_command(cli: Cli) -> Result<i32> {
             codex,
             copilot,
             dry_run,
+            compress,
         } => {
             let ctx = hooks::init::InitContext {
                 verbose: cli.verbose,
                 dry_run,
+                // Only install writes get compressed: an uninstall rewrites
+                // the user's surviving instructions, which must stay verbatim.
+                compress: compress && !uninstall && !show,
                 awareness: if show || uninstall {
                     core::config::AwarenessLevel::default()
                 } else {
