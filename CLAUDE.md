@@ -74,7 +74,7 @@ Always prefer `rtk <cmd>` when a filter exists. If you need the raw bytes, use `
 - `rtk read --mode map <file>` — signatures + imports.
 
 ### Compression & references (use before pasting long output)
-- `rtk expand <hash>` — restore output hidden behind `§ref:<hash>§`.
+- `rtk recall <hash>` — restore full output behind an `rtk recall`-style hint (large outputs are auto-stored).
 - `rtk diff <file1> <file2>` — changed-lines-only diff.
 - `rtk pipe [-f filter]` — filter stdin through an RTK filter.
 
@@ -94,14 +94,13 @@ Always prefer `rtk <cmd>` when a filter exists. If you need the raw bytes, use `
 - **Python**: `pytest`, `pip`, `ruff`, `mypy`.
 - **Ruby**: `rake`, `rspec`, `rubocop`.
 - **.NET**: `dotnet`.
-- **Mobile**: `flutter`, `dart`, `gradlew`.
+- **Mobile**: `gradlew`.
 - **Cloud / ops**: `docker`, `kubectl`, `oc`, `aws`, `curl`, `wget`, `psql`, `mvn`.
-- **Elixir**: `mix`.
 - **Utilities**: `ls`, `tree`, `find`, `wc`, `env`, `grep`, `rg`, `json`, `log`, `err`, `summary`, `smart`, `test`, `run`, `proxy`.
 - **Automation**: `rtk run <cmd>` auto-routes recognized commands to the right filter, so you can default to it when unsure; `rtk proxy <cmd>` always runs raw.
 
 ### When NOT to use rtk
-- When the raw full output is required and `rtk expand` is not enough: `rtk proxy <cmd>`.
+- When the raw full output is required: `rtk proxy <cmd>`.
 - For unsupported one-off commands where every byte matters.
 
 ## Architecture
