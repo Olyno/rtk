@@ -12,6 +12,7 @@ mod parser;
 
 // Re-export command modules for routing
 use cmds::cloud::{aws_cmd, container, curl_cmd, psql_cmd, wget_cmd};
+use cmds::dart::{dart_cmd, flutter_cmd};
 use cmds::dotnet::{binlog, dotnet_cmd, dotnet_format_report, dotnet_trx};
 use cmds::git::{diff_cmd, gh_cmd, git_cmd, glab_cmd, gt_cmd};
 use cmds::go::{go_cmd, golangci_cmd};
@@ -322,6 +323,20 @@ enum Commands {
     /// PostgreSQL client with compact output (strip borders, compress tables)
     Psql {
         /// psql arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Flutter commands with compact analyzer and test output
+    Flutter {
+        /// Flutter arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+
+    /// Dart commands with compact analyzer, formatter, and test output
+    Dart {
+        /// Dart arguments
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -2831,6 +2846,10 @@ fn dispatch_command(cli: Cli) -> Result<i32> {
 
         Commands::Psql { args } => psql_cmd::run(&args, cli.verbose)?,
 
+        Commands::Flutter { args } => flutter_cmd::run(&args, cli.verbose)?,
+
+        Commands::Dart { args } => dart_cmd::run(&args, cli.verbose)?,
+
         Commands::Pnpm {
             filter,
             recursive,
@@ -4145,6 +4164,8 @@ fn is_operational_command(cmd: &Commands) -> bool {
             | Commands::Glab { .. }
             | Commands::Aws { .. }
             | Commands::Psql { .. }
+            | Commands::Flutter { .. }
+            | Commands::Dart { .. }
             | Commands::Pnpm { .. }
             | Commands::Err { .. }
             | Commands::Run { .. }
@@ -4757,6 +4778,8 @@ mod tests {
             "glab",
             "aws",
             "psql",
+            "flutter",
+            "dart",
             "pnpm",
             "env",
             "find",

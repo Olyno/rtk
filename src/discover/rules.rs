@@ -572,6 +572,26 @@ pub const RULES: &[RtkRule] = &[
         ..RtkRule::DEFAULT
     },
     RtkRule {
+        pattern: r"^dart\s+(test|analyze|format)(\s|$)",
+        rtk_cmd: "rtk dart",
+        pipeline_safety: PipelineSafety::ProducerOnly,
+        rewrite_prefixes: &["dart"],
+        category: "Build",
+        savings_pct: 80.0,
+        subcmd_savings: &[("test", 90.0), ("analyze", 85.0)],
+        subcmd_status: &[],
+    },
+    RtkRule {
+        pattern: r"^flutter\s+(test|analyze)(\s|$)",
+        rtk_cmd: "rtk flutter",
+        pipeline_safety: PipelineSafety::ProducerOnly,
+        rewrite_prefixes: &["flutter"],
+        category: "Build",
+        savings_pct: 80.0,
+        subcmd_savings: &[("test", 90.0), ("analyze", 85.0)],
+        subcmd_status: &[],
+    },
+    RtkRule {
         pattern: r"^(?:golangci-lint|golangci)\s+(run)(?:\s|$)",
         rtk_cmd: "rtk golangci-lint run",
         pipeline_safety: PipelineSafety::ProducerOnly,
