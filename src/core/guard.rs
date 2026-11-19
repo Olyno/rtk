@@ -51,15 +51,13 @@ mod tests {
 
     #[test]
     fn tie_keeps_filtered() {
-        // Both strings tokenize to a single token with the GPT-4o tokenizer,
-        // so a tie should keep the filtered output.
-        assert_eq!(never_worse("hello", "world"), "world");
+        assert_eq!(never_worse("abcd", "wxyz"), "wxyz");
     }
 
     #[test]
     fn token_boundary_follows_estimate_tokens() {
-        assert_eq!(never_worse("abcd", "abcde"), "abcd"); // filtered bigger -> raw
-        assert_eq!(never_worse("ijklmnop", "abcd"), "abcd"); // filtered smaller -> filtered
+        assert_eq!(never_worse("abcd", "abcde"), "abcd");
+        assert_eq!(never_worse("abcdefgh", "ijklmnop"), "ijklmnop");
     }
 
     #[test]

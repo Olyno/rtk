@@ -1260,7 +1260,6 @@ pub(crate) fn filter_cargo_test(output: &str) -> String {
 
     if !failures.is_empty() {
         result.push_str(&format!("FAILURES ({}):\n", failures.len()));
-
         const MAX_FAILURES: usize = CAP_WARNINGS;
         for (i, failure) in failures.iter().enumerate().take(MAX_FAILURES) {
             result.push_str(&format!("{}. {}\n", i + 1, truncate(failure, 200)));

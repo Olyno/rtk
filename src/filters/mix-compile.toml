@@ -8,7 +8,6 @@ strip_lines_matching = [
   "^Generated\\s",
 ]
 max_lines = 40
-collapse_repeated_lines = 3
 on_empty = "mix compile: ok"
 
 [[tests.mix-compile]]

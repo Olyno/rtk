@@ -41,7 +41,7 @@ pub fn filter_pip_show(output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tokenizer;
+    use crate::core::tracking as tokenizer;
 
     #[test]
     fn test_filter_pip_show_strips_noise() {

@@ -3,8 +3,6 @@
 //! Flattens a dependency tree to top-level packages only and trims verbose
 //! semver strings to `major.minor`. Inspired by token-savior's NpmListCompactor.
 
-#![allow(dead_code)]
-
 use regex::Regex;
 
 /// Compact npm/yarn/pnpm list output.
@@ -75,7 +73,7 @@ fn trim_version(name_at_ver: &str, ver_re: &Regex) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::tokenizer;
+    use crate::core::tracking as tokenizer;
 
     #[test]
     fn test_filter_npm_list_top_level_only() {
